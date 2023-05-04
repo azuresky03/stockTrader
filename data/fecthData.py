@@ -26,7 +26,7 @@ for mode in ('Train','Test'):
             "date,code,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST",
             start_date=start_time, end_date=end_time,
             frequency="d", adjustflag="1")
-        if rs.error_code!=0:
+        if rs.error_code!='0':
             print('query_history_k_data_plus respond error_code:'+rs.error_code)
             print('query_history_k_data_plus respond  error_msg:'+rs.error_msg)
         else:

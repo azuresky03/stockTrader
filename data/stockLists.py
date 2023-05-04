@@ -12,6 +12,6 @@ comm = {'sz.002352':'顺丰控股','sh.601766':'中国中车','sh.600029':'南�
 Utility = {'sh.600941':"中国移动",'sh.601728':'中国电信','sh.600900':'长江电力'}
 
 stock_d = dict()
-for d in (Tech,Fina,Health,Ind,ConStaple,Energy,RE,comm,Utility):
+for d in (Tech,Fina,Health,Ind,ConStaple,Energy,RE,comm,Utility,ConsumerDiscretionary):
     for key, value in d.items():
         stock_d[key] = value
