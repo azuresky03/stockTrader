@@ -43,6 +43,14 @@ for mode in ('Train','Test'):
 
         result = pd.DataFrame(data_list, columns=rs.fields)
 
+        ''' 
+        # TODO : Calculate following values and append them as extra column in csv files.
+        #? maybe use pandas library
+        1. MACD 
+        2. RSI
+        3. ADX
+        '''
+
         #### 结果集输出到csv文件 ####
         # each stock have seperate csv files.
         result.to_csv(mode+stock_d[stock_code]+".csv", index=False)
