@@ -1,3 +1,4 @@
+#initialize data
 train_time_range = ('2014-06-01','2020-12-31')
 test_time_range = ('2021-01-01','2023-04-30')
 ConsumerDiscretionary = {'sh.600519':'贵州茅台','sz.000858':'五粮液','sh.601888':'中国中免'}
@@ -12,6 +13,8 @@ comm = {'sz.002352':'顺丰控股','sh.601766':'中国中车','sh.600029':'南�
 Utility = {'sh.600941':"中国移动",'sh.601728':'中国电信','sh.600900':'长江电力'}
 
 stock_d = dict()
+
+# put all stocks into dictionary as {sz.002594 : 比亚迪}
 for d in (Tech,Fina,Health,Ind,ConStaple,Energy,RE,comm,Utility,ConsumerDiscretionary):
     for key, value in d.items():
         stock_d[key] = value
