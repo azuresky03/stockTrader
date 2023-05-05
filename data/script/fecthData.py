@@ -19,7 +19,7 @@ for mode in ('Train','Test'):
 
     #stock code is id for stock like 'sz.002594', stock_d[stock_code] is name like '比亚迪'
     for stock_code in stock_d:
-        print(mode,"qcuring stock:",stock_code,stock_d[stock_code])
+        print(mode,"acquiring stock:",stock_code,stock_d[stock_code])
         #### 获取沪深A股历史K线数据 ####
         # 详细指标参数，参见“历史行情指标参数”章节；“分钟线”参数与“日线”参数不同。“分钟线”不包含指数。
         # 分钟线指标：date,time,code,open,high,low,close,volume,amount,adjustflag
@@ -53,7 +53,7 @@ for mode in ('Train','Test'):
 
         #### 结果集输出到csv文件 ####
         # each stock have seperate csv files.
-        result.to_csv("..\\" + "processed_data"+mode+stock_d[stock_code]+".csv", index=False)
+        result.to_csv("..\\" + "raw_data\\"+mode+stock_d[stock_code]+".csv", index=False)
 
 #### 登出系统 ####
 bs.logout()
