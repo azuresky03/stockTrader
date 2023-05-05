@@ -137,7 +137,7 @@ macd_df = calculate_macd(df)
 rsi_df = calculate_rsi(df)
 adx_df = calculate_adx(df)
 
-# add result to original dataframe
+# add processed_data to original dataframe
 df = pd.concat([df, macd_df], axis=1)
 df = pd.concat([df, rsi_df], axis=1)
 df = pd.concat([df, adx_df], axis=1)
@@ -146,7 +146,7 @@ df = pd.concat([df, adx_df], axis=1)
 df = df.drop(['preclose','adjustflag','tradestatus','pctChg','isST'],axis=1)
 
 # form destination address
-target = "..\\" + "result" + "\\" + str(file_name)
+target = "..\\" + "processed_data" + "\\" + str(file_name)
 
 #print destination
 print(target)

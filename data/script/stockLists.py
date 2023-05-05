@@ -1,4 +1,4 @@
-#initialize data
+#initialize raw_data
 train_time_range = ('2014-06-01','2020-12-31')
 test_time_range = ('2021-01-01','2023-04-30')
 ConsumerDiscretionary = {'sh.600519':'贵州茅台','sz.000858':'五粮液','sh.601888':'中国中免'}

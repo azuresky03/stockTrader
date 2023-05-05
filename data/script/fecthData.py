@@ -25,7 +25,7 @@ for mode in ('Train','Test'):
         # 分钟线指标：date,time,code,open,high,low,close,volume,amount,adjustflag
         # 周月线指标：date,code,open,high,low,close,volume,amount,adjustflag,turn,pctChg
         rs = bs.query_history_k_data_plus(stock_code,
-            #the data to acquire
+            #the raw_data to acquire
             "date,code,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST",
             start_date=start_time, end_date=end_time,
             frequency="d", adjustflag="1")
@@ -35,7 +35,7 @@ for mode in ('Train','Test'):
         else:
             print("download successful!")
 
-        # create pd.DataFrame object using data from rs 
+        # create pd.DataFrame object using raw_data from rs
 
         data_list = []
         while (rs.error_code == '0') and rs.next():
@@ -53,7 +53,7 @@ for mode in ('Train','Test'):
 
         #### 结果集输出到csv文件 ####
         # each stock have seperate csv files.
-        result.to_csv(mode+stock_d[stock_code]+".csv", index=False)
+        result.to_csv("..\\" + "processed_data"+mode+stock_d[stock_code]+".csv", index=False)
 
 #### 登出系统 ####
 bs.logout()
