@@ -3,14 +3,14 @@ from gym import spaces
 import numpy as np
 import pandas as pd
 
-STOCK_NUM = 30
+STOCK_NUM = 1
 INI_ACCOUNT_BALANCE = 100000
-FEATURES_NUM = 8
+FEATURES_NUM = 7
 MIN_TRANS_NUM = 100
 SELL_FEES = 0.0001
 STOP_ACCOUNT_BALANCE = 0.3*INI_ACCOUNT_BALANCE
 
-class StocktradingEnv(gym.Env):
+class StockTradingEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self,df):
@@ -32,7 +32,7 @@ class StocktradingEnv(gym.Env):
         #State space
         # shape = current balance 1 + owned shares 30 + other values(first 30 prices) *30
         # low ? 0 / negative infinity
-        self.observation_space = spaces.Box(low=0,high=np.inf,shape=(1+STOCK_NUM+FEATURES_NUM*STOCK_NUM,))
+        self.observation_space = spaces.Box(low=0,high=np.inf,shape=(1+STOCK_NUM+FEATURES_NUM*STOCK_NUM,),dtype=np.float64)
 
         #initalize state
         self.state = self._get_obs()
@@ -43,17 +43,16 @@ class StocktradingEnv(gym.Env):
         :return: np.array
         """
 
-        arr = np.concatenate([[self.account_balance],self.share_hold,self.df.iloc[[self.day]].to_numpy()])
+        arr = np.concatenate([[self.account_balance],self.share_hold,self.df.iloc[self.day].to_numpy()])
         return arr
 
     def _get_info(self):
         """
         get information of current status
-        :return: string
+        :return: dict
         """
-        s = f'day={self.day} balance={self.account_balance} shares={self.share_hold} new worth={self.net_worth} $'
-        s += f'prices={self.state[STOCK_NUM+1:2*STOCK_NUM+1]}'
-        return s
+        d = { "day":self.day, "balance":self.account_balance, "shares":self.share_hold, "net_worth":self.net_worth}
+        return d
 
     def _take_action(self,action):
         assert len(action)==STOCK_NUM
@@ -61,12 +60,12 @@ class StocktradingEnv(gym.Env):
         #sell stocks
         for i in range(STOCK_NUM):
             if action[i] < 0 and self.share_hold[i]>0:
-                sell_amount = int(action[i]*self.share_hold)
+                sell_amount = -int(action[i]*self.share_hold[i])
                 if sell_amount:
                     self.share_hold[i] -= sell_amount
                     self.account_balance += MIN_TRANS_NUM * (1-SELL_FEES) * sell_amount * self.state[1+STOCK_NUM+i]
             elif action[i] > 0:
-                buy_stock_total += action[i]
+                buy_stock_total += 1
         #buy stocks proportionally
         for i in range(STOCK_NUM):
             if action[i] > 0 and self.account_balance > 0:
@@ -87,21 +86,25 @@ class StocktradingEnv(gym.Env):
         stop_string = ""
 
         self._take_action(action)
+        d = self._get_info()
 
         reward = self.net_worth - pre_net_worth
 
         if self.net_worth < STOP_ACCOUNT_BALANCE:
             done = True
-            stop_string = "Loose too much"
-        elif self.day >= self.df.shape[0]:
+            d["stop_string"] = "lose too much"
+        elif self.day >= self.df.shape[0]-2:
             done = True
-            stop_string = "Reach the end day"
+            d["stop_string"] = "Reach the end day"
 
-        self.day += 1
-        next_obs = self._get_obs()
-        self.state = next_obs
+        if not done:
+            self.day += 1
+            next_obs = self._get_obs()
+            self.state = next_obs
+        else:
+            next_obs = self.state
 
-        return next_obs,reward,done,self._get_info()+stop_string
+        return next_obs,reward,done,d
 
     def reset(self,new_df=None):
         """
@@ -117,7 +120,7 @@ class StocktradingEnv(gym.Env):
         self.share_hold = [0] * STOCK_NUM
         self.net_worth = INI_ACCOUNT_BALANCE
         self.state = self._get_obs()
-        return self.state,self._get_info()
+        return self.state
 
     def updateDF(self,new_df,begin_day=None):
         self.df = new_df
