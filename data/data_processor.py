@@ -1,6 +1,8 @@
 import akshare as ak
 import pandas as pd
+import itertools
 from stockstats import StockDataFrame as Sdf
+from finrl.meta.preprocessor.preprocessors import FeatureEngineer
 
 START_DATE = "2014-06-01"  # "2014-01-06", should contain "-"
 END_DATE = "2023-04-30"  # "2021-10-01", should contain "-"
@@ -43,10 +45,9 @@ tickers = [
 INDICATORS = [
     "macd",
     "adx",
+    "rsi_30",
     "boll_ub",
     "boll_lb",
-    "rsi_14",
-    "rsi_28",
     "close_30_sma",
     "close_60_sma",
 ]
@@ -75,8 +76,8 @@ def download_data(
         start_date = start_date.replace("-", "")
         end_date = end_date.replace("-", "")
         # remove front 2 letters for sh and sz
-        tickers = [ticker[2:] for ticker in tickers]
-        for ticker in tickers:
+        new_tickers = [ticker[2:] for ticker in tickers]
+        for ticker in new_tickers:
             try:
                 temp_data = ak.stock_zh_a_hist(
                     symbol=ticker,
@@ -85,7 +86,7 @@ def download_data(
                     end_date=end_date,
                     adjust=adjust,
                 )
-                temp_data["ticker"] = ticker
+                temp_data["ticker"] = tickers[new_tickers.index(ticker)]
                 df = pd.concat([df, temp_data])
             except Exception as e:
                 print(f"Error fetching data for {ticker}: {e}")
@@ -108,37 +109,6 @@ def download_data(
 
     # store data into a csv file
     df.to_csv("raw_data.csv", index=False)
-    return df
-
-
-def add_technical_indicator(data):
-    df = data.copy()
-    df = df.sort_values(by=["tic", "date"])
-    stock = Sdf.retype(df.copy())
-    unique_ticker = stock.tic.unique()
-
-    for indicator in INDICATORS:
-        indicator_df = pd.DataFrame()
-        for i in range(len(unique_ticker)):
-            try:
-                temp_indicator = stock[stock.tic == unique_ticker[i]][indicator]
-                temp_indicator = pd.DataFrame(temp_indicator)
-                temp_indicator["tic"] = unique_ticker[i]
-                temp_indicator["date"] = df[df.tic == unique_ticker[i]][
-                    "date"
-                ].to_list()
-                # indicator_df = indicator_df.append(
-                #     temp_indicator, ignore_index=True
-                # )
-                indicator_df = pd.concat(
-                    [indicator_df, temp_indicator], axis=0, ignore_index=True
-                )
-            except Exception as e:
-                print(e)
-        df = df.merge(
-            indicator_df[["tic", "date", indicator]], on=["tic", "date"], how="left"
-        )
-    df = df.sort_values(by=["date", "tic"])
     return df
 
 
@@ -170,11 +140,32 @@ def preprocess_data(df: pd.DataFrame):
     # remove "-" in date
     # df["date"] = df["date"].apply(lambda x: x.replace("-", ""))
 
-    # add indicators
-    stock_df = add_technical_indicator(df)
+    # add technical indicators
+    fe = FeatureEngineer(
+        use_technical_indicator=True,
+        tech_indicator_list=INDICATORS,
+        use_vix=False,
+        use_turbulence=True,
+        user_defined_feature=True,
+    )
+    df = fe.preprocess_data(df)
 
-    # fill the missing values with zero
-    stock_df = stock_df.fillna(0)
+    list_ticker = df["tic"].unique().tolist()
+    list_date = list(pd.date_range(df["date"].min(), df["date"].max()).astype(str))
+    combination = list(itertools.product(list_date, list_ticker))
+    stock_df = pd.DataFrame(combination, columns=["date", "tic"]).merge(
+        df, on=["date", "tic"], how="left"
+    )
+    stock_df = stock_df[stock_df["date"].isin(df["date"])]
+    stock_df = stock_df.sort_values(["date", "tic"])
+
+    # fill the missing values
+    stock_df.interpolate(method="linear", inplace=True)
+    stock_df.fillna(method="ffill", inplace=True)
+    stock_df.fillna(method="bfill", inplace=True)
+
+    # sort the data and reset index
+    stock_df.sort_values(["date", "tic"], ignore_index=True)
 
     # write to csv
     stock_df.to_csv("processed_data.csv", index=False)
