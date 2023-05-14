@@ -168,7 +168,7 @@ def preprocess_data(df: pd.DataFrame):
     df.insert(1, "tic", tic_column)
 
     # remove "-" in date
-    df["date"] = df["date"].apply(lambda x: x.replace("-", ""))
+    # df["date"] = df["date"].apply(lambda x: x.replace("-", ""))
 
     # add indicators
     stock_df = add_technical_indicator(df)
