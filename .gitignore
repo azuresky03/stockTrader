@@ -2,3 +2,5 @@
 FinRL_Example/results/
 FinRL_Example/tensorboard_log/
 
+FinRL_Example/db.sqlite3
+.vscode/*
