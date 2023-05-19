@@ -7,7 +7,7 @@ STOCK_NUM = 1
 INI_ACCOUNT_BALANCE = 100000
 FEATURES_NUM = 7
 MIN_TRANS_NUM = 100
-SELL_FEES = 0.0001
+SELL_FEES = 0.001
 STOP_ACCOUNT_BALANCE = 0.3*INI_ACCOUNT_BALANCE
 
 class StockTradingEnv(gym.Env):
@@ -83,7 +83,6 @@ class StockTradingEnv(gym.Env):
     def step(self,action):
         pre_net_worth = self.net_worth
         done = False
-        stop_string = ""
 
         self._take_action(action)
         d = self._get_info()
