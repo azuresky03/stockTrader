@@ -8,8 +8,8 @@ INI_ACCOUNT_BALANCE = 500000
 FEATURES_LIST = ['close','volume','high','open','low','macd','adx','rsi']
 FEATURES_NUM = len(FEATURES_LIST)
 MIN_TRANS_NUM = 100
-SELL_FEES = 0.001
-BUY_FEES = 0.001
+SELL_FEES = 0.0025
+BUY_FEES = 0.002
 STOP_ACCOUNT_BALANCE = 0.3*INI_ACCOUNT_BALANCE
 
 class StockTradingEnv(gym.Env):
@@ -28,6 +28,8 @@ class StockTradingEnv(gym.Env):
         self.share_hold = [0]*STOCK_NUM
         self.cur_price = [0]*STOCK_NUM
         self.trading = [True]*STOCK_NUM
+        self.holding_price = [0]*STOCK_NUM
+        self.trans_reward = 0
         self.net_worth = INI_ACCOUNT_BALANCE
 
         #Action space
@@ -36,7 +38,7 @@ class StockTradingEnv(gym.Env):
         #State space
         # shape = current balance 1 + owned shares 30 + other values(first 30 prices) *30
         # low ? 0 / negative infinity
-        self.observation_space = spaces.Box(low=np.NINF,high=np.inf,shape=(1+STOCK_NUM+FEATURES_NUM*STOCK_NUM,),dtype=np.float64)
+        self.observation_space = spaces.Box(low=np.NINF,high=np.inf,shape=(1+2*STOCK_NUM+FEATURES_NUM*STOCK_NUM,),dtype=np.float64)
 
         #initalize state
         self.state = self._get_obs()
@@ -56,7 +58,7 @@ class StockTradingEnv(gym.Env):
                 other_features[j*STOCK_NUM+i] = self.df.iloc[self.day+i][FEATURES_LIST[j+2]]
         self.cur_price = cur_price
         self.trading = trading
-        arr = np.concatenate([[self.account_balance],self.share_hold,self.cur_price,self.trading,other_features])
+        arr = np.concatenate([[self.account_balance],self.share_hold,self.cur_price,self.holding_price,self.trading,other_features])
         return arr
 
     def _get_info(self):
@@ -76,6 +78,7 @@ class StockTradingEnv(gym.Env):
                 if sell_amount:
                     self.share_hold[i] -= sell_amount
                     self.account_balance += MIN_TRANS_NUM * (1-SELL_FEES) * sell_amount * self.cur_price[i]
+                    self.trans_reward += sell_amount * MIN_TRANS_NUM * (self.cur_price[i]-self.holding_price[i])
             elif self.trading[i] and action[i] > 0:
                 buy_stock_total += 1
         #buy stocks proportionally
@@ -83,6 +86,7 @@ class StockTradingEnv(gym.Env):
             if self.trading[i] and action[i] > 0 and self.account_balance > 0:
                 buy_amount = int (self.account_balance * action[i] / buy_stock_total / self.cur_price[i] / MIN_TRANS_NUM)
                 if buy_amount > 0:
+                    self.holding_price[i] = (self.holding_price[i] * self.share_hold[i] + self.cur_price[i]*buy_amount)/(self.share_hold[i]+buy_amount)
                     self.share_hold[i] += buy_amount
                     self.account_balance -= buy_amount * MIN_TRANS_NUM * self.state[1+STOCK_NUM+i] * (1+BUY_FEES)
         #compute net worth
@@ -99,7 +103,9 @@ class StockTradingEnv(gym.Env):
         self._take_action(action)
         d = self._get_info()
 
-        reward = self.net_worth - pre_net_worth
+        reward = (self.net_worth - pre_net_worth)*0.7 + 0.5*self.trans_reward
+        d['trans_reward'] = self.trans_reward
+        self.trans_reward = 0
 
         if self.net_worth < STOP_ACCOUNT_BALANCE:
             done = True
@@ -132,6 +138,8 @@ class StockTradingEnv(gym.Env):
         self.cur_price = [0]*STOCK_NUM
         self.trading = [True]*STOCK_NUM
         self.net_worth = INI_ACCOUNT_BALANCE
+        self.holding_price = [0]*STOCK_NUM
+        self.trans_reward = 0
         self.state = self._get_obs()
         return self.state
 
