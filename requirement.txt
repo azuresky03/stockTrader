@@ -4,3 +4,4 @@ pydantic==1.10.7
 torch
 torchvision
 finrl
+pytorch_forecasting
