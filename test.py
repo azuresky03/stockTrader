@@ -1,7 +1,16 @@
-from pytorch_forecasting import QuantileLoss, TemporalFusionTransformer
-from stock_TFT import TFTModel
+import matplotlib.pyplot as plt
 import pandas as pd
-
+import pytorch_lightning as pl
+from pytorch_forecasting import QuantileLoss, TemporalFusionTransformer
+from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks import (LearningRateMonitor,
+                                         ModelCheckpoint)
+from pytorch_lightning.utilities.types import (_EVALUATE_OUTPUT,
+                                               _PREDICT_OUTPUT,
+                                               EVAL_DATALOADERS,
+                                               TRAIN_DATALOADERS,
+                                               LRSchedulerConfig)
+from stock_TFT import TFTModel
 
 
 def train_model():
@@ -15,10 +24,7 @@ def train_model():
     df = df.iloc[9:, ]
     df.insert(7, "next_close", df["close"].shift(-1))
     df_train = df.iloc[:-1, ]
-    # print(df["next_close"].describe())
     print(df_train.columns)
-    # print(df[-1, :])
-    # df_train = df.iloc[:, :]
     df_train.dropna()
     df_test = df.iloc[544:, :]  
     
@@ -43,21 +49,54 @@ def train_model():
         reduce_on_plateau_patience=4
     )
 
-    # df_test = pd.read_csv("../auto-stock-trader/stockTrader/data/Test万华化学.csv", sep=',')
-    
-def eval(model: TemporalFusionTransformer):
-    df_test = pd.read_csv("./data/Train万华化学.csv", sep=',')
+    return model
 
+    
+def predict():
+    df_test = pd.read_csv("./data/Test万华化学.csv", sep=',')
     df_test = TFTModel.preprocess(df_test)
 
-    model.predict(df_test)
+    predict_length = 20
+    final_predictions = []
+    day = 0
 
-    err = model.evaluate()
+    model = TemporalFusionTransformer.load_from_checkpoint("./lightning_logs/lightning_logs/version_3/checkpoints/epoch=29-step=300.ckpt")
+    
+    while day <= predict_length:
+        checkpoint_callback = ModelCheckpoint(
+            monitor='val_loss',
+            dirpath='./lightning_logs/best/v1',
+            filename='best-checkpoint',
+            save_top_k=1,
+            mode='min',
+        )
 
-    print("MAE error: ", err)
+        predictions = model.predict(df_test)[0]
+        final_predictions.extend(predictions)
+
+        lr_logger = LearningRateMonitor()
+        logger = TensorBoardLogger("lightning_logs")
+        trainer = pl.Trainer(callbacks=[checkpoint_callback])
+
+        left_index = 0 if day == 0 else day * len(predictions)
+
+        train_data = df_test.iloc[left_index : left_index + len(predictions), :]
+        train_dataset = TFTModel.create_dataset_from_df(train_data, 24, 6)
+
+        # trainer.fit(
+        #     model=model,
+        #     train_dataloaders=TFTModel.dataloader_from_dataset(train_dataset, True, 128, 0)
+        #     val_dataloaders=
+        # )
+        
+
+
+    # based on next_close value, determine action
+
 
 
 
 
 if __name__ == "__main__":
-    main()
+    predicts = TFTModel.predict("./data/Test万华化学.csv")
+    print(predicts)
