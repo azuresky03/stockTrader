@@ -15,7 +15,7 @@ from pytorch_forecasting.models import TemporalFusionTransformer
 class TFTModel():
 
     @classmethod
-    def create_dataset_from_df(self, data: pd.DataFrame, max_encoder_length: int, max_prediction_length: int):
+    def create_dataset_from_df(cls, data: pd.DataFrame, max_encoder_length: int, max_prediction_length: int):
         return TimeSeriesDataSet(
             data=data,
             time_idx="time_idx",
@@ -45,7 +45,7 @@ class TFTModel():
     
 
     @classmethod
-    def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
+    def preprocess(cls, df: pd.DataFrame) -> pd.DataFrame:
         df.insert(0, "time_idx", [i for i in range(df.shape[0])])
         df = df.drop(columns='date', axis=1)
         df = df.drop(columns='turn', axis=1)
@@ -53,8 +53,9 @@ class TFTModel():
         df_clean = df.iloc[:-1, ]
         return df_clean
     
+
     @classmethod
-    def dataloader_from_dataset(self, dataset: TimeSeriesDataSet, isTrain: bool, batch_size: int, num_workers: int = 0):
+    def dataloader_from_dataset(cls, dataset: TimeSeriesDataSet, isTrain: bool, batch_size: int, num_workers: int = 0):
         dataloader = dataset.to_dataloader(
             train=isTrain, batch_size=batch_size, num_workers=num_workers
         )
@@ -66,19 +67,19 @@ class TFTModel():
         self.bes_model_path = ""
         self.batch_size = batch_size
 
-        self.train_dataset = TFTModel.create_dataset_from_df(df_train)
+        # self.train_dataset = TFTModel.create_dataset_from_df(df_train)
 
-        self.validation_dataset = TimeSeriesDataSet.from_dataset(
-            self.train_dataset, df_train, predict=True, stop_randomization=True
-        )
+        # self.validation_dataset = TimeSeriesDataSet.from_dataset(
+        #     self.train_dataset, df_train, predict=True, stop_randomization=True
+        # )
 
-        self.train_dataloader = self.train_dataset.to_dataloader(
-            train=True, batch_size=batch_size, num_workers=0
-        )
+        # self.train_dataloader = self.train_dataset.to_dataloader(
+        #     train=True, batch_size=batch_size, num_workers=0
+        # )
 
-        self.val_dataloader = self.validation_dataset.to_dataloader(
-            train=False, batch_size=batch_size * 10, num_workers=0
-        )
+        # self.val_dataloader = self.validation_dataset.to_dataloader(
+        #     train=False, batch_size=batch_size * 10, num_workers=0
+        # )
 
     
 
