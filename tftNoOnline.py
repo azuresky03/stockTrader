@@ -1,3 +1,4 @@
+from pytorch_forecasting import SMAPE
 from pytorch_forecasting.models.base_model import Prediction
 import torch
 import pandas as pd
@@ -9,6 +10,7 @@ from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, Mode
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_forecasting.metrics import QuantileLoss
 from pytorch_forecasting.models import TemporalFusionTransformer
+
 
 def preprocess(df: pd.DataFrame) -> pd.DataFrame:
     df.insert(0, "time_idx", [i for i in range(df.shape[0])])
@@ -54,24 +56,28 @@ def dataloader_from_dataset(dataset: TimeSeriesDataSet, isTrain: bool, batch_siz
 
     return dataloader
 
-def main():
+def train():
+    # hyper parameters
     max_epochs = 30
     gradient_clip_val = 0.1
     limt_train_batches = 10
-    learning_rate = 0.01
+    learning_rate = 0.03
     hidden_size = 64
-    attention_head_size = 5
-    dropout = 0.01
+    attention_head_size = 4
+    dropout = 0.2
+    lstm_layers = 2
     hidden_continuous_size = 18
     output_size = 7
     log_interval = 10
     reduce_on_plateau_patience = 4
+
+
     df_train = pd.read_csv("./data/Train万华化学.csv", sep=',')
-    df_test = pd.read_csv("./data/Test万华化学.csv", sep=",")
 
     df_train = preprocess(df_train)
     # print(df_train["next_close"].describe())
 
+    df_test = pd.read_csv("./data/Test万华化学.csv", sep=",")
     df_test = preprocess(df_test)
     # print(df_test.shape)
     lr_logger = LearningRateMonitor()
@@ -101,24 +107,26 @@ def main():
 
 
     tft = TemporalFusionTransformer.from_dataset(
-        train_dataset,
+        dataset=train_dataset,
         learning_rate=learning_rate,
         hidden_size=hidden_size,
         attention_head_size=attention_head_size,
         dropout=dropout,
+        lstm_layers=lstm_layers,
         hidden_continuous_size=hidden_continuous_size,
         output_size=output_size,  #  7 quantiles by default
         loss=QuantileLoss(),
+        # loss=SMAPE(),
         log_interval=log_interval,
         reduce_on_plateau_patience=reduce_on_plateau_patience,
     )
 
-
+    validation = TimeSeriesDataSet.from_dataset(train_dataset, df_train, predict=True, stop_randomization=True)
 
     trainer.fit(
         tft,
         train_dataloaders=dataloader_from_dataset(train_dataset, isTrain=True, batch_size=128),
-        val_dataloaders=dataloader_from_dataset(train_dataset, isTrain=False, batch_size=1280)
+        val_dataloaders=dataloader_from_dataset(validation, isTrain=False, batch_size=1280)
     )
 
     best_model_path = trainer.checkpoint_callback.best_model_path
@@ -126,12 +134,30 @@ def main():
     return
 
 
-def predict(test_file_path: str):
+def predict(file_path: str):
+    df_test = pd.read_csv(file_path, sep=",")
+    df_test = preprocess(df_test)
 
-    pass
+    model = TemporalFusionTransformer.load_from_checkpoint("./lightning_logs/lightning_logs/version_2/checkpoints/epoch=29-step=300.ckpt")
+    model.eval()
+
+    with torch.no_grad():
+        predictions = model.predict(df_test, return_x=True)
+
+    # predictions_vs_actuals = model.calculate_prediction_actual_by_variable(x, predictions)
+    # all_features = list(set(predictions_vs_actuals['support'].keys())-set(['num_sold_lagged_by_365', 'num_sold_lagged_by_30', 'num_sold_lagged_by_7']))
+    # for feature in all_features:
+    #     model.plot_prediction_actual_by_variable(predictions_vs_actuals, name=feature)
+
+    return predictions
+
 
 
 if __name__ == "__main__":
-    main()
+    train()
+    # predictions = predict("./data/Test万华化学.csv")
+    # print(predictions)
+
 
     # best model path: lightning_logs/lightning_logs/version_0/checkpoints/epoch=29-step=300.ckpt
+    # increased dropout: lightning_logs/lightning_logs/version_2/checkpoints/epoch=29-step=300.ckpt
