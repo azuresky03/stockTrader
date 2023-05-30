@@ -5,6 +5,11 @@ plt.style.use('seaborn')
 from sklearn.preprocessing import MinMaxScaler
 import torch
 from stock_LSTM import LSTM
+import os
+
+
+DATA_DIR = "./data"
+RES_DIR = "./results"
 
 
 def stocks_data(symbols: list[str], dates: pd.DatetimeIndex, img_dir: str) -> list[pd.DataFrame]:
@@ -29,7 +34,7 @@ def stocks_data(symbols: list[str], dates: pd.DatetimeIndex, img_dir: str) -> li
         plt.ylabel("stock_price")
         plt.xlabel("date")
         plt.legend()
-        plt.savefig(f"{img_dir}/{symbol}.png")
+        plt.savefig(f"{img_dir}/{symbol}_read.png")
 
         datas.append(df)
     
@@ -68,6 +73,7 @@ def load_data(stock_data: pd.DataFrame, splt_rate: float, look_back: int) -> lis
 def train(
         model_path: str,
         stock_data: pd.DataFrame,
+        stock_name: str,
         split_rate: float = 0.2,
         look_back: int = 30
     ) -> LSTM:
@@ -121,7 +127,7 @@ def train(
 
     plt.plot(hist, label="Training loss")
     plt.legend()
-    plt.savefig('training_loss.png')
+    plt.savefig(f'{RES_DIR}/{stock_name}_training_loss.png')
     plt.show()
 
     torch.save(model.state_dict(), model_path)
@@ -157,6 +163,15 @@ def predict(model: LSTM, data_tensors: list[torch.Tensor], stock_name: str, df: 
     plt.legend()
     plt.savefig(f'{stock_name}_pred.png')
     plt.show()
+
+
+def main():
+    files = [ file for file in os.listdir(DATA_DIR) if file[:5] == "Train" ]
+    dates = pd.date_range('2014-06-03','2020-12-31',freq='B')
+    data_dfs = stocks_data(files, dates, RES_DIR)
+
+    for df in data_dfs:
+        pass
 
 
 
