@@ -77,7 +77,7 @@ class LSTM(nn.Module):
     
 
     @staticmethod
-    def stocks_data(symbols: list[str], dates: pd.DatetimeIndex, data_type: str, img_dir: str) -> list[pd.DataFrame]:
+    def stocks_data(symbols: list[str], dates: pd.DatetimeIndex, img_dir: str) -> list[pd.DataFrame]:
         """
         symbols: a list of file name that contains stock data (eg. csv files)
         dates:   date time index that indicates time range of stock data
@@ -87,7 +87,7 @@ class LSTM(nn.Module):
 
         for symbol in symbols:
             df = pd.DataFrame(index=dates)
-            df_temp = pd.read_csv("../stockTrader/data/{}.csv".format(data_type + symbol), index_col='date',
+            df_temp = pd.read_csv("../stockTrader/data/{}".format(symbol), index_col='date',
                     parse_dates=True, usecols=['date', 'close'], na_values=['nan'])
             df_temp = df_temp.rename(columns={'close': symbol})
             df = df.join(df_temp)
@@ -103,6 +103,11 @@ class LSTM(nn.Module):
             datas.append(df)
         
         return datas
+
+
+    @staticmethod
+    def eval_metric(metric_method):
+        pass
     
 
     def train(
@@ -198,14 +203,6 @@ class LSTM(nn.Module):
         plt.show()
 
         return [y_train_pred, y_test_pred]
-
-
-    def eval_metric(metric_method):
-        pass
-
-
-# TODO: add train and predict into model itself
-
 
 
 
