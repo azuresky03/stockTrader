@@ -95,19 +95,22 @@ class LSTM(nn.Module):
 
             df[symbol] = scaler.fit_transform(df[symbol].values.reshape(-1,1))
 
-            df.plot(figsize=(10, 6), subplots=True)
-            plt.ylabel("stock_price")
-            plt.xlabel("date")
-            plt.legend()
-            plt.savefig(f"{img_dir}/{symbol}_read.png")
+            # df.plot(figsize=(10, 6), subplots=True)
+            # plt.ylabel("stock_price")
+            # plt.xlabel("date")
+            # plt.legend()
+            # plt.savefig(f"{img_dir}/{symbol}_read.png")
             datas.append(df)
         
         return datas
 
 
     @staticmethod
-    def eval_metric(metric_method):
-        pass
+    def eval_metric(predictions: np.ndarray, actuals: np.ndarray):
+        assert(predictions.shape == actuals.shape)
+        mae_loss = np.sum(np.abs(predictions - actuals))
+        
+        return mae_loss
     
 
     def train(
@@ -116,7 +119,7 @@ class LSTM(nn.Module):
         stock_data: pd.DataFrame,
         stock_name: str,
         result_store_dir: str,
-        loss_fn = torch.nn.MSELoss,
+        # loss_fn = torch.nn.MSELoss,
         optimizer_fn = torch.optim.Adam,
         split_rate: float = 0.2,
         learning_rate: float = 0.02,
@@ -132,7 +135,7 @@ class LSTM(nn.Module):
         y_test_tensor = torch.from_numpy(y_test).type(torch.Tensor)
 
         # model = LSTM(input_dim=input_dim, hidden_dim=hidden_dim, out_dim=output_dim, num_layers=num_layers)
-        # loss_fn = torch.nn.MSELoss()
+        loss_fn = torch.nn.MSELoss()
         optimizer = optimizer_fn(self.parameters(), lr=learning_rate)
 
         num_epochs = 500
@@ -165,8 +168,8 @@ class LSTM(nn.Module):
         plt.savefig(f'{result_store_dir}/{stock_name}_training_loss.png')
         plt.show()
 
-        torch.save(self.state_dict(), model_path)
-        print("Model has been saved to:", model_path)
+        torch.save(self.state_dict(), model_path + stock_name)
+        print("Model has been saved to:", model_path + stock_name)
         return [x_train_tensor, y_train_tensor, x_test_tensor, y_test_tensor]
 
 
@@ -194,6 +197,7 @@ class LSTM(nn.Module):
 
         axes.plot(np.array(df[len(df)-len(y_test):].index), y_test, color = 'red', label = 'Real Stock Price')
         axes.plot(np.array(df[len(df)-len(y_test):].index), y_test_pred, color = 'blue', label = 'Predicted Stock Price')
+        
         # axes.xticks(np.arange(0,394,50))
         plt.title('Stock Price Prediction')
         plt.xlabel('Time')
