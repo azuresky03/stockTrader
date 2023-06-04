@@ -32,8 +32,13 @@ class LSTM(nn.Module):
         """
         feed data into a 
         """
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_()
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_()
+        # h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_()
+        # c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_()
+        # if torch.isnan(x).any():
+        #     print("NaN value found in input!")
+
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_().to(self.device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_().to(self.device)
         out, (hn, cn) = self.lstm(x, (h0.detach(), c0.detach()))
         
         out = self.fc1(out[:, -1, :])
@@ -89,12 +94,15 @@ class LSTM(nn.Module):
             df = pd.DataFrame(index=dates)
             df_temp = pd.read_csv("../stockTrader/data/{}".format(symbol), index_col='date',
                     parse_dates=True, usecols=['date', 'close'], na_values=['nan'])
-            df_temp = df_temp.rename(columns={'close': symbol})
+            df_temp = df_temp.rename(columns={'close': 'value'})
             df = df.join(df_temp)
-            df.fillna(method='ffill')
+            # df.fillna(df.mean(), inplace=True)
+            df.fillna(method="ffill", inplace=True)
+            # df.interpolate(method='linear', inplace=True)
+            # df.fillna(method='bfill', inplace=True)
 
-            df[symbol] = scaler.fit_transform(df[symbol].values.reshape(-1,1))
-
+            df['value'] = scaler.fit_transform(df['value'].values.reshape(-1,1))
+        
             # df.plot(figsize=(10, 6), subplots=True)
             # plt.ylabel("stock_price")
             # plt.xlabel("date")
@@ -102,7 +110,7 @@ class LSTM(nn.Module):
             # plt.savefig(f"{img_dir}/{symbol}_read.png")
             datas.append(df)
         
-        return datas
+        return datas, scaler
 
 
     @staticmethod
@@ -119,7 +127,7 @@ class LSTM(nn.Module):
         stock_data: pd.DataFrame,
         stock_name: str,
         result_store_dir: str,
-        # loss_fn = torch.nn.MSELoss,
+        loss_fn = torch.nn.MSELoss,
         optimizer_fn = torch.optim.Adam,
         split_rate: float = 0.2,
         learning_rate: float = 0.02,
@@ -143,7 +151,9 @@ class LSTM(nn.Module):
         seq_dim =look_back-1 
 
         for e in range(num_epochs):
+            # print(x_train_tensor)
             y_train_pred = self(x_train_tensor)
+            # print("predicted prices: ", y_train_pred)
 
             loss = loss_fn(y_train_pred, y_train_tensor)
             if e % 10 == 0 and e !=0:
@@ -163,29 +173,39 @@ class LSTM(nn.Module):
         for var_name in optimizer.state_dict():
             print(var_name, "\t", optimizer.state_dict()[var_name])
 
-        plt.plot(hist, label="Training loss")
-        plt.legend()
-        plt.savefig(f'{result_store_dir}/{stock_name}_training_loss.png')
-        plt.show()
+        # plt.plot(hist, label="Training loss")
+        # plt.legend()
+        # plt.savefig(f'{result_store_dir}/{stock_name}_training_loss.png')
+        # plt.show()
 
         torch.save(self.state_dict(), model_path + stock_name)
         print("Model has been saved to:", model_path + stock_name)
         return [x_train_tensor, y_train_tensor, x_test_tensor, y_test_tensor]
 
 
-    def predict(self, data_tensors: list[torch.Tensor], stock_name: str, df: pd.DataFrame):
+    def predict(self, data_tensors: list[torch.Tensor], stock_name: str, df: pd.DataFrame, scaler: MinMaxScaler, saved_model_path: str = None):
         """
         predict data based on 
         """
         x_train_tensor, y_train_tensor, x_test_tensor, y_test_tensor = data_tensors
+        model = None
+        if saved_model_path:
+            model = LSTM(hidden_dim=32, input_dim=1, num_layers=2, out_dim=1)
+            model.load_state_dict(torch.load(saved_model_path))
+        else:
+            model = self
 
         with torch.no_grad():
-            y_train_pred = self(x_train_tensor)
-            y_test_pred = self(x_test_tensor)
+            y_train_pred = model(x_train_tensor)
+            y_test_pred = model(x_test_tensor)
 
         # scaling features to efficiently learn from data
-        scaler = MinMaxScaler(feature_range=(-1, 1))
+        # scaler = MinMaxScaler(feature_range=(-1, 1))
         # invert predictions
+        # scaler.fit(df[['value']])
+
+        # # Transform the data
+        # df['value'] = scaler.transform(df[['value']])
         y_train_pred = scaler.inverse_transform(y_train_pred.detach().numpy())
         y_train = scaler.inverse_transform(y_train_tensor.detach().numpy())
         y_test_pred = scaler.inverse_transform(y_test_pred.detach().numpy())
@@ -207,9 +227,3 @@ class LSTM(nn.Module):
         plt.show()
 
         return [y_train_pred, y_test_pred]
-
-
-
-
-if __name__ == "__main__":
-    pass
