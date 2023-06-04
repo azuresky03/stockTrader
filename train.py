@@ -274,8 +274,6 @@ def main(data_dir: str):
             else:
                 test_files.append(file)
 
-    # print(train_files)
-
     dates = pd.date_range('2014-06-03','2020-12-31',freq='B')
     dates_test = pd.date_range('2021-01-04','2023-04-28',freq='B')
     train_dfs, train_scaler = LSTM.stocks_data(train_files, dates=dates, img_dir="./train_results")
@@ -283,23 +281,12 @@ def main(data_dir: str):
 
     for file_index in range(len(train_files)):
         file_name = train_files[file_index].split(".")[0][5:]
-        print(file_name)
-
         train_df = train_dfs[file_index]
         test_df = test_dfs[file_index]
         
         split_rate = len(test_df) /(len(train_df) + len(test_df))
-        # print(split_rate)
-        # train_second_col_name = train_df.columns[1]
-        # test_second_col_name = test_df.columns[1]
-        # test_df = test_df.rename(columns={test_second_col_name: train_second_col_name})
         combined_df = pd.concat([train_df, test_df], axis=0)
-        # print(combined_df.isna())
-        # combined_df = combined_df.reset_index()
-
-        # train_dfs = LSTM.load_data(stock_data=combined_df, split_rate=split_rate, look_back=60)
-
-
+    
         model = LSTM(hidden_dim=32, input_dim=1, num_layers=2, out_dim=1)
         # data_tensors = model.train(
         #     model_path="./savedModel/", 
@@ -327,11 +314,15 @@ def main(data_dir: str):
                             scaler=test_scaler,
                             saved_model_path=f"./savedModel/{file_name}"
                         )
+
+        date_index = pd.date_range(start='2021-01-04', periods=len(y_test_pred), freq='B')
+        prediction_df = pd.DataFrame(index=date_index)
+        prediction_df[file_name] = y_test_pred
+        print(prediction_df)
+
+        prediction_df.to_csv(f"./predictions/{file_name}_pred.csv")
         mae_loss = LSTM.eval_metric(y_test_pred, data_tensors[-1].detach().numpy())
-        # print(f"MAE Loss: {mae_loss}")
-
-        
-
+        print(f"MAE Loss: {mae_loss}")
 
 
 if __name__ == "__main__":

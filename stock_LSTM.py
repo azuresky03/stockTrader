@@ -142,7 +142,6 @@ class LSTM(nn.Module):
         y_train_tensor = torch.from_numpy(y_train).type(torch.Tensor)
         y_test_tensor = torch.from_numpy(y_test).type(torch.Tensor)
 
-        # model = LSTM(input_dim=input_dim, hidden_dim=hidden_dim, out_dim=output_dim, num_layers=num_layers)
         loss_fn = torch.nn.MSELoss()
         optimizer = optimizer_fn(self.parameters(), lr=learning_rate)
 
@@ -185,7 +184,7 @@ class LSTM(nn.Module):
 
     def predict(self, data_tensors: list[torch.Tensor], stock_name: str, df: pd.DataFrame, scaler: MinMaxScaler, saved_model_path: str = None):
         """
-        predict data based on 
+        predict data based on saved model
         """
         x_train_tensor, y_train_tensor, x_test_tensor, y_test_tensor = data_tensors
         model = None
@@ -199,13 +198,9 @@ class LSTM(nn.Module):
             y_train_pred = model(x_train_tensor)
             y_test_pred = model(x_test_tensor)
 
-        # scaling features to efficiently learn from data
-        # scaler = MinMaxScaler(feature_range=(-1, 1))
-        # invert predictions
-        # scaler.fit(df[['value']])
+        # scaling features using same min max scaler that used during preprocessing to efficiently learn from data
 
         # # Transform the data
-        # df['value'] = scaler.transform(df[['value']])
         y_train_pred = scaler.inverse_transform(y_train_pred.detach().numpy())
         y_train = scaler.inverse_transform(y_train_tensor.detach().numpy())
         y_test_pred = scaler.inverse_transform(y_test_pred.detach().numpy())
@@ -213,7 +208,6 @@ class LSTM(nn.Module):
 
         figure, axes = plt.subplots(figsize=(15, 6))
         axes.xaxis_date()
-        # print(type(np.array(df[len(df)-len(y_test):].index)))
 
         axes.plot(np.array(df[len(df)-len(y_test):].index), y_test, color = 'red', label = 'Real Stock Price')
         axes.plot(np.array(df[len(df)-len(y_test):].index), y_test_pred, color = 'blue', label = 'Predicted Stock Price')
