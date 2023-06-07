@@ -1,9 +1,11 @@
 import numpy as np
 import pandas as pd 
-from pylab import plt
+import matplotlib.pyplot as plt
 plt.style.use('seaborn')
 from sklearn.preprocessing import MinMaxScaler
 import torch
+from torch.utils.data import DataLoader
+from torch.nn import MSELoss
 from stock_LSTM import LSTM
 import os
 
@@ -12,327 +14,171 @@ DATA_DIR = "./data"
 RES_DIR = "./results"
 
 
-# def stocks_data(symbols: list[str], dates: pd.DatetimeIndex, img_dir: str) -> list[pd.DataFrame]:
-#     """
-#     symbols: a list of file name that contains stock data
-#     dates:   date time index that indicates time range of stock data
-#     """
-#     datas = []
-#     scaler = MinMaxScaler(feature_range=(-1, 1))
+def train(model: LSTM, n_epochs: int, device, trainloader: DataLoader, save_model_path: str): #testloader: DataLoader,
+    t_losses, v_losses = [], []
+    criterion = MSELoss().to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+    for epoch in range(n_epochs):
+      train_loss, valid_loss = 0.0, 0.0
 
-#     for symbol in symbols:
-#         df = pd.DataFrame(index=dates)
-#         df_temp = pd.read_csv("../stockTrader/data/Train{}.csv".format(symbol), index_col='date',
-#                 parse_dates=True, usecols=['date', 'close'], na_values=['nan'])
-#         df_temp = df_temp.rename(columns={'close': symbol})
-#         df = df.join(df_temp)
-#         df.fillna(method='ffill')
+      # train step
+      model.train()
+      # Loop over train dataset
+      for x, y in trainloader:
+        optimizer.zero_grad()
+        # move inputs to device
+        x = x.to(device)
+        y  = y.squeeze().to(device)
 
-#         df[symbol] = scaler.fit_transform(df[symbol].values.reshape(-1,1))
+        # print("x: ", x.shape)
+        # print("y: ", x.shape)
 
-#         df.plot(figsize=(10, 6), subplots=True)
-#         plt.ylabel("stock_price")
-#         plt.xlabel("date")
-#         plt.legend()
-#         plt.savefig(f"{img_dir}/{symbol}_read.png")
+        # Forward Pass
+        # print("check nan: ", np.isnan(x.detach().numpy()).any())
+        preds = model(x).squeeze()
+        # print("preds: ", preds.shape)
 
-#         datas.append(df)
+        loss = criterion(preds, y) # compute batch loss
+        train_loss += loss.item()
+        loss.backward()
+        optimizer.step()
+      epoch_loss = train_loss / len(trainloader)
+      t_losses.append(epoch_loss)
+      
+      # validation step
+      # model.eval()
+      # # Loop over validation dataset
+      # for x, y in testloader:
+      #   with torch.no_grad():
+      #     x, y = x.to(device), y.squeeze().to(device)
+      #     preds = model(x).squeeze()
+      #     error = criterion(preds, y)
+      #   valid_loss += error.item()
+      # valid_loss = valid_loss / len(testloader)
+      # v_losses.append(valid_loss)
+          
+      print(f'{epoch} - train: {epoch_loss}, valid: {valid_loss}')
+    # plot_losses(t_losses, v_losses)
+
+    torch.save(model.state_dict(), save_model_path)
+    print("Model is saved to:", save_model_path)
+
+
+def make_predictions_from_dataloader(model, unshuffled_dataloader):
+  model.eval()
+  predictions, actuals = [], []
+  for x, y in unshuffled_dataloader:
+    with torch.no_grad():
+      p = model(x)
+      predictions.append(p)
+      actuals.append(y.squeeze())
+  predictions = torch.cat(predictions).numpy()
+  actuals = torch.cat(actuals).numpy()
+  return predictions.squeeze(), actuals
+
+def one_step_forecast(model: LSTM, history: pd.DataFrame, sequence_len: int, nout: int):
+      '''
+      model: PyTorch model object
+      history: a sequence of values representing the latest values of the time 
+      series, requirement -> len(history.shape) == 2
     
-#     return datas
-
-
-# def load_data(stock_data: pd.DataFrame, splt_rate: float, look_back: int) -> list[np.ndarray]:
-#     """"
-#     split data to train and test for a single stock data
-
-#     return:
-#         list of np.ndarray
-#     """
-#      # convert to numpy array
-#     data_raw = stock_data.values
-#     data = []
-    
-#     # create all possible sequences of length look_back
-#     for index in range(len(data_raw) - look_back):
-#         data.append(data_raw[index: index + look_back])
-    
-#     data = np.array(data)
-#     test_set_size = int(np.round(splt_rate * data.shape[0]))
-#     train_set_size = data.shape[0] - (test_set_size)
-    
-#     x_train = data[:train_set_size,:-1,:]
-#     y_train = data[:train_set_size,-1,:]
-    
-#     x_test = data[train_set_size:,:-1]
-#     y_test = data[train_set_size:,-1,:]
-
-    
-#     return [x_train, y_train, x_test, y_test]
-
-
-# def train(
-#         model_path: str,
-#         stock_data: pd.DataFrame,
-#         stock_name: str,
-#         split_rate: float = 0.2,
-#         look_back: int = 30
-#     ) -> LSTM:
-#     # load and preprocess data
-
-#     x_train, y_train, x_test, y_test = load_data(stock_data, split_rate, look_back)
-
-#     x_train_tensor = torch.from_numpy(x_train).type(torch.Tensor)
-#     x_test_tensor = torch.from_numpy(x_test).type(torch.Tensor)
-#     y_train_tensor = torch.from_numpy(y_train).type(torch.Tensor)
-#     y_test_tensor = torch.from_numpy(y_test).type(torch.Tensor)
-    
-#     # hyper parameters
-#     input_dim: int = 1
-#     hidden_dim: int = 12
-#     num_layers: int = 2
-#     output_dim: int = 1  
-#     look_back: int = 30
-#     learning_rate: float = 0.02
-
-#     model = LSTM(input_dim=input_dim, hidden_dim=hidden_dim, out_dim=output_dim, num_layers=num_layers)
-#     loss_fn = torch.nn.MSELoss()
-#     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
-#     num_epochs = 500
-#     hist = np.zeros(num_epochs)
-#     seq_dim =look_back-1 
-
-#     for e in range(num_epochs):
-
-#         y_train_pred = model(x_train_tensor)
-
-#         loss = loss_fn(y_train_pred, y_train_tensor)
-#         if e % 10 == 0 and e !=0:
-#             print("Epoch ", e, "MSE: ", loss.item())
-
-#         hist[e] = loss.item()
-#         optimizer.zero_grad()
-
-#         loss.backward()
-#         optimizer.step()
-
-
-#     print("Model's state_dict:")
-#     for param_tensor in model.state_dict():
-#         print(param_tensor, "\t", model.state_dict()[param_tensor].size())
-
-#     print("Optimizer's state_dict:")
-#     for var_name in optimizer.state_dict():
-#         print(var_name, "\t", optimizer.state_dict()[var_name])
-
-#     plt.plot(hist, label="Training loss")
-#     plt.legend()
-#     plt.savefig(f'{RES_DIR}/{stock_name}_training_loss.png')
-#     plt.show()
-
-#     torch.save(model.state_dict(), model_path)
-#     print("Model has been saved to:", model_path)
-#     return model, [x_train_tensor, y_train_tensor, x_test_tensor, y_test_tensor]
-
-
-# def predict(model: LSTM, data_tensors: list[torch.Tensor], stock_name: str, df: pd.DataFrame):
-#     x_train_tensor, y_train_tensor, x_test_tensor, y_test_tensor = data_tensors
-
-#     model.eval()
-#     y_train_pred = model(x_train_tensor)
-#     y_test_pred = model(x_test_tensor)
-
-#     scaler = MinMaxScaler(feature_range=(-1, 1))
-#     # invert predictions
-#     y_train_pred = scaler.inverse_transform(y_train_pred.detach().numpy())
-#     y_train = scaler.inverse_transform(y_train_tensor.detach().numpy())
-#     y_test_pred = scaler.inverse_transform(y_test_pred.detach().numpy())
-#     y_test = scaler.inverse_transform(y_test_tensor.detach().numpy())
-
-#     figure, axes = plt.subplots(figsize=(15, 6))
-#     axes.xaxis_date()
-
-#     # print(type(np.array(df[len(df)-len(y_test):].index)))
-
-#     axes.plot(np.array(df[len(df)-len(y_test):].index), y_test, color = 'red', label = 'Real Stock Price')
-#     axes.plot(np.array(df[len(df)-len(y_test):].index), y_test_pred, color = 'blue', label = 'Predicted Stock Price')
-#     #axes.xticks(np.arange(0,394,50))
-#     plt.title('Stock Price Prediction')
-#     plt.xlabel('Time')
-#     plt.ylabel('Stock Price')
-#     plt.legend()
-#     plt.savefig(f'{stock_name}_pred.png')
-#     plt.show()
-
-# def train(
-#     model,
-#     model_path: str,
-#     stock_data: pd.DataFrame,
-#     stock_name: str,
-#     result_store_dir: str,
-#     # loss_fn = torch.nn.MSELoss,
-#     optimizer_fn = torch.optim.Adam,
-#     split_rate: float = 0.2,
-#     learning_rate: float = 0.02,
-#     look_back: int = 60,
-# ) -> list[torch.Tensor]:
-#     # load and preprocess data
-#     x_train, y_train, x_test, y_test = LSTM.load_data(stock_data, split_rate, look_back)
-
-#     # convert to tensor to allow back propagate
-#     x_train_tensor = torch.from_numpy(x_train).type(torch.Tensor)
-#     x_test_tensor = torch.from_numpy(x_test).type(torch.Tensor)
-#     y_train_tensor = torch.from_numpy(y_train).type(torch.Tensor)
-#     y_test_tensor = torch.from_numpy(y_test).type(torch.Tensor)
-
-#     # print(torch.isnan(x_test_tensor))
-#     # model = LSTM(input_dim=input_dim, hidden_dim=hidden_dim, out_dim=output_dim, num_layers=num_layers)
-#     loss_fn = torch.nn.MSELoss()
-#     optimizer = optimizer_fn(model.parameters(), lr=learning_rate)
-
-#     num_epochs = 500
-#     hist = np.zeros(num_epochs)
-#     seq_dim =look_back-1
-
-#     for e in range(num_epochs):
-#         # print(x_train_tensor)
-#         y_train_pred = model(x_train_tensor)
-
-#         # print("predicted prices: ", y_train_pred)
-#         loss = loss_fn(y_train_pred, y_train_tensor)
-
-#         if e % 10 == 0 and e !=0:
-#             print("Epoch ", e, "MSE: ", loss.item())
-
-#         hist[e] = loss.item()
-#         optimizer.zero_grad()
-
-#         loss.backward()
-#         # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
-#         optimizer.step()
-
-#     print("Model's state_dict:")
-#     for param_tensor in model.state_dict():
-#         print(param_tensor, "\t", model.state_dict()[param_tensor].size())
-
-#     print("Optimizer's state_dict:")
-#     for var_name in optimizer.state_dict():
-#         print(var_name, "\t", optimizer.state_dict()[var_name])
-
-#     # plt.plot(hist, label="Training loss")
-#     # plt.legend()
-#     # plt.savefig(f'{result_store_dir}/{stock_name}_training_loss.png')
-#     # plt.show()
-
-#     torch.save(model.state_dict(), model_path + stock_name)
-#     print("Model has been saved to:", model_path + stock_name)
-#     return [x_train_tensor, y_train_tensor, x_test_tensor, y_test_tensor]
-
-
-# def predict(model, data_tensors: list[torch.Tensor], stock_name: str, df: pd.DataFrame):
-#     """
-#     predict data based on 
-#     """
-#     x_train_tensor, y_train_tensor, x_test_tensor, y_test_tensor = data_tensors
-
-#     with torch.no_grad():
-#         y_train_pred = model(x_train_tensor)
-#         y_test_pred = model(x_test_tensor)
-
-#     # scaling features to efficiently learn from data
-#     scaler = MinMaxScaler(feature_range=(-1, 1))
-#     # invert predictions
-#     y_train_pred = scaler.inverse_transform(y_train_pred.detach().numpy())
-#     y_train = scaler.inverse_transform(y_train_tensor.detach().numpy())
-#     y_test_pred = scaler.inverse_transform(y_test_pred.detach().numpy())
-#     y_test = scaler.inverse_transform(y_test_tensor.detach().numpy())
-
-#     figure, axes = plt.subplots(figsize=(15, 6))
-#     axes.xaxis_date()
-#     # print(type(np.array(df[len(df)-len(y_test):].index)))
-
-#     axes.plot(np.array(df[len(df)-len(y_test):].index), y_test, color = 'red', label = 'Real Stock Price')
-#     axes.plot(np.array(df[len(df)-len(y_test):].index), y_test_pred, color = 'blue', label = 'Predicted Stock Price')
-    
-#     # axes.xticks(np.arange(0,394,50))
-#     plt.title('Stock Price Prediction')
-#     plt.xlabel('Time')
-#     plt.ylabel('Stock Price')
-#     plt.legend()
-#     plt.savefig(f'{stock_name}_pred.png')
-#     plt.show()
-
-#     return [y_train_pred, y_test_pred]
-
-
-def main(data_dir: str):
-    train_files, test_files = [], []
-    for file in os.listdir(data_dir):
-        if file[-1] != "y":
-            if file[:5] == "Train":
-                train_files.append(file)
-            else:
-                test_files.append(file)
-
-    # print(train_files)
-
-    dates = pd.date_range('2014-06-03','2020-12-31',freq='B')
-    dates_test = pd.date_range('2021-01-04','2023-04-28',freq='B')
-    train_dfs, train_scaler = LSTM.stocks_data(train_files, dates=dates, img_dir="./train_results")
-    test_dfs, test_scaler = LSTM.stocks_data(test_files, dates=dates_test, img_dir="./train_results")
-
-    for file_index in range(len(train_files)):
-        file_name = train_files[file_index].split(".")[0][5:]
-        print(file_name)
-
-        train_df = train_dfs[file_index]
-        test_df = test_dfs[file_index]
-        
-        split_rate = len(test_df) /(len(train_df) + len(test_df))
-        # print(split_rate)
-        # train_second_col_name = train_df.columns[1]
-        # test_second_col_name = test_df.columns[1]
-        # test_df = test_df.rename(columns={test_second_col_name: train_second_col_name})
-        combined_df = pd.concat([train_df, test_df], axis=0)
-        # print(combined_df.isna())
-        # combined_df = combined_df.reset_index()
-
-        # train_dfs = LSTM.load_data(stock_data=combined_df, split_rate=split_rate, look_back=60)
-
-
-        model = LSTM(hidden_dim=32, input_dim=1, num_layers=2, out_dim=1)
-        # data_tensors = model.train(
-        #     model_path="./savedModel/", 
-        #     stock_data=combined_df, 
-        #     stock_name=file_name,
-        #     split_rate=split_rate,
-        #     result_store_dir="./train_result", 
-        #     look_back=60,
-        #     # optimizer_fn = torch.optim.SGD(model.parameters(), lr=0.02)
-        # )
-
-        x_train, y_train, x_test, y_test = LSTM.load_data(combined_df, split_rate, 30)
-
-        x_train_tensor = torch.from_numpy(x_train).type(torch.Tensor)
-        x_test_tensor = torch.from_numpy(x_test).type(torch.Tensor)
-        y_train_tensor = torch.from_numpy(y_train).type(torch.Tensor)
-        y_test_tensor = torch.from_numpy(y_test).type(torch.Tensor)
-
-        data_tensors = (x_train_tensor, y_train_tensor, x_test_tensor, y_test_tensor)
-
-        y_train_pred, y_test_pred = model.predict(
-                            data_tensors=data_tensors, 
-                            stock_name=file_name, 
-                            df=combined_df, 
-                            scaler=test_scaler,
-                            saved_model_path=f"./savedModel/{file_name}"
-                        )
-        mae_loss = LSTM.eval_metric(y_test_pred, data_tensors[-1].detach().numpy())
-        # print(f"MAE Loss: {mae_loss}")
-
-        
-
-
-
+      outputs a single value which is the prediction of the next value in the
+      sequence.
+      '''
+      model.cpu()
+      model.eval()
+
+      test_dataloader = model.load_data(history, sequence_len=sequence_len, isShuffle=False, nout=1, BATCH_SIZE=len(history))
+
+      with torch.no_grad():
+        for x, y in test_dataloader:
+          preds = model(x).squeeze()
+          # prsint("pre shape: ", pre.shape)
+          pred = model(pre)
+      return pred.detach().numpy().reshape(-1)
+
+def n_step_forecast(model: LSTM, data: pd.DataFrame, target: str, tw: int, n: int, forecast_from: int=None, plot=False):
+      '''
+      n: integer defining how many steps to forecast
+      forecast_from: integer defining which index to forecast from. None if
+      you want to forecast from the end.
+      plot: True if you want to output a plot of the forecast, False if not.
+      '''
+      history = data.iloc[:,2:].copy().to_frame()
+      # history = model.load_data(data, sequence_len=tw, nout=1, BATCH_SIZE=, split=0.0)
+      # Create initial sequence input based on where in the series to forecast 
+      # from.
+      if forecast_from:
+        pre = history[forecast_from - tw : forecast_from]
+      else:
+        pre = history[-tw:]
+
+      # Call one_step_forecast n times and append prediction to history
+      for i, step in enumerate(range(n)):
+        pre_ = np.array(pre[-tw:]).reshape(-1, 1)
+        forecast = one_step_forecast(model, pre_).squeeze()
+        np.append(pre, forecast)
+      
+      # The rest of this is just to add the forecast to the correct time of 
+      # the history series
+      res = history.copy()
+      ls = [np.nan for i in range(len(history))]
+
+      # Note: I have not handled the edge case where the start index + n is 
+      # before the end of the dataset and crosses past it.
+      if forecast_from:
+        ls[forecast_from : forecast_from + n] = list(np.array(pre[-n:]))
+        res['forecast'] = ls
+        res.columns = ['actual', 'forecast']
+      else:
+        fc = ls + list(np.array(pre[-n:]))
+        ls = ls + [np.nan for i in range(len(pre[-n:]))]
+        ls[:len(history)] = history.values
+        res = pd.DataFrame([ls, fc], index=['actual', 'forecast']).T
+      return res
+
+def main():
+  df = pd.read_csv('./data/Train万华化学.csv', sep=',')
+  test_df = pd.read_csv('./data/Test万华化学.csv', sep=',')
+  n_features=12
+  nhid = 50 # Number of nodes in the hidden layer
+  n_dnn_layers = 5 # Number of hidden fully connected layers
+  nout = 1 # Prediction Window
+  sequence_len = 180 # Training Window
+
+  USE_CUDA = torch.cuda.is_available()
+  device = 'cuda' if USE_CUDA else 'cpu'
+
+
+  model = LSTM(n_features, nhid, nout, sequence_len, n_deep_layers=n_dnn_layers).to(device)
+  # model.load_state_dict(torch.load('./savedModel/万华化学'))
+
+  
+  train_dataloader = model.load_data(df, sequence_len=sequence_len, nout=nout)
+  train(model=model, n_epochs = 50, device=device, trainloader=train_dataloader, save_model_path='./savedModel/万华化学') # testloader=test_df,
+
+  #-----------------------------------------
+
+  # predictions = n_step_forecast(model, df, "close", 180, 100)["forecast"].values[-100:]
+  # predictions = predictions['close']
+  # actuals = np.array(test_df["close"].values[:100])
+
+
+  # figure, axes = plt.subplots(figsize=(15, 6))
+  # axes.xaxis_date()
+
+  # dates = np.array(pd.date_range(start="2020-01-04", periods=100, freq="B"))
+
+  # axes.plot(dates, actuals, color = 'red', label = 'Real Stock Price')
+  # axes.plot(dates, predictions, color = 'blue', label = 'Predicted Stock Price')
+  # #axes.xticks(np.arange(0,394,50))
+  # plt.title('Stock Price Prediction')
+  # plt.xlabel('Time')
+  # plt.ylabel('Stock Price')
+  # plt.legend()
+  # plt.savefig('./plots/万华化学.png')
+  # plt.show()
+
+  
 if __name__ == "__main__":
-    main("./data")
+    main()

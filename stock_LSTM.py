@@ -8,222 +8,166 @@ plt.style.use('seaborn')
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, random_split
 from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import MinMaxScaler
 from torch.autograd import Variable
+from sklearn.preprocessing import StandardScaler
+from Sequence import SequenceDataset
+
 
 
 class LSTM(nn.Module):
-    def __init__(self, hidden_dim: int, input_dim: int, num_layers: int, out_dim: int) -> None:
-        super(LSTM, self).__init__()
-        self.hidden_dim = hidden_dim
-        self.num_layers = num_layers
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first=True)
-
-        # TODO: temporal information to capture?
-        self.fc1 = nn.Linear(hidden_dim, hidden_dim)  # added layer
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)  # added layer
-        self.fc3 = nn.Linear(hidden_dim, out_dim)     # output layer
 
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        feed data into a 
-        """
-        # h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_()
-        # c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_()
-        # if torch.isnan(x).any():
-        #     print("NaN value found in input!")
-
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_().to(self.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_().to(self.device)
-        out, (hn, cn) = self.lstm(x, (h0.detach(), c0.detach()))
-        
-        out = self.fc1(out[:, -1, :])
-        out = self.fc2(out)
-        out = self.fc3(out)
-
-        return out
+  def __init__(self, n_features, n_hidden, n_outputs, sequence_len, n_lstm_layers=1, n_deep_layers=10, use_cuda=False, dropout=0.2):
+    '''
+      n_features: number of input features (1 for univariate forecasting)
+      n_hidden: number of neurons in each hidden layer
+      n_outputs: number of outputs to predict for each training example
+      n_deep_layers: number of hidden dense layers after the lstm layer
+      sequence_len: number of steps to look back at for prediction
+      dropout: float (0 < dropout < 1) dropout ratio between dense layers
+    '''
+    super().__init__()
+    self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    self.n_lstm_layers = n_lstm_layers
+    self.nhid = n_hidden
+    self.use_cuda = use_cuda # set option for device selection
+    self.sequence_len = sequence_len
+    # LSTM Layer
+    self.lstm = nn.LSTM(n_features,
+                        n_hidden,
+                        num_layers=n_lstm_layers,
+                        batch_first=True) # As we have transformed our data in this way
     
+    # first dense after lstm
+    self.fc1 = nn.Linear(n_hidden * sequence_len, n_hidden) 
+    # self.fc1 = nn.Linear(n_hidden, n_hidden)
+    # Dropout layer 
+    self.dropout = nn.Dropout(p=dropout)
 
-    @staticmethod
-    def load_data(stock_data: pd.DataFrame, split_rate: float, look_back: int) -> list[np.ndarray]:
-        """"
-        split data to train and test for a single stock data
-        params:
-            stock_data -> data frame that needs to process
-            split_rate -> determines percentage of given data to be train or test data
-            look_back  -> provide time range to allow LSTM to search for pattern  
-                          NOTE: this param should be consistent for both training and prediction process
-            
-        return:
-            list of np.ndarray
-        """
-        # convert to numpy array
-        data_raw = stock_data.values
-        data = []
+    # Create fully connected layers (n_hidden x n_deep_layers)
+    dnn_layers = []
+    for i in range(n_deep_layers):
+      # Last layer (n_hidden x n_outputs)
+      if i == n_deep_layers - 1:
+        dnn_layers.append(nn.ReLU())
+        dnn_layers.append(nn.Linear(self.nhid, n_outputs))
+      # All other layers (n_hidden x n_hidden) with dropout option
+      else:
+        dnn_layers.append(nn.ReLU())
+        dnn_layers.append(nn.Linear(self.nhid, self.nhid))
+        if dropout:
+          dnn_layers.append(nn.Dropout(p=dropout))
+    # compile DNN layers
+    self.dnn = nn.Sequential(*dnn_layers)
+
+  def forward(self, x):
+    # Initialize hidden state
+    hidden_state = torch.zeros(self.n_lstm_layers, x.shape[0], self.nhid)
+    cell_state = torch.zeros(self.n_lstm_layers, x.shape[0], self.nhid)
+
+    # move hidden state to device
+    if self.use_cuda:
+      hidden_state = hidden_state.to(self.device)
+      cell_state = cell_state.to(self.device)
         
-        # create all possible sequences of length look_back
-        for index in range(len(data_raw) - look_back):
-            data.append(data_raw[index: index + look_back])
-        
-        data = np.array(data)
-        test_set_size = int(np.round(split_rate * data.shape[0]))
-        train_set_size = data.shape[0] - (test_set_size)
-        
-        x_train = data[:train_set_size,:-1,:]
-        y_train = data[:train_set_size,-1,:]
-        
-        x_test = data[train_set_size:,:-1]
-        y_test = data[train_set_size:,-1,:]
-        return [x_train, y_train, x_test, y_test]
-    
+    self.hidden = (hidden_state, cell_state)
 
-    @staticmethod
-    def stocks_data(symbols: list[str], dates: pd.DatetimeIndex, img_dir: str) -> list[pd.DataFrame]:
-        """
-        symbols: a list of file name that contains stock data (eg. csv files)
-        dates:   date time index that indicates time range of stock data
-        """
-        datas = []
-        scaler = MinMaxScaler(feature_range=(-1, 1))
+    # Forward Pass
+    x, h = self.lstm(x, self.hidden) # LSTM
+    # x = self.dropout(x.contiguous().view(x.shape[0], -1)) # Flatten lstm out 
+    # x = x.contiguous().view(x.shape[0], -1)
+    x = x.contiguous().view(x.shape[0], self.nhid * self.sequence_len)
+    # x, (h_n, c_n) = self.lstm(x, self.hidden)  # h_n shape is (n_lstm_layers, batch, n_hidden)
+    # x = h_n[-1]  # Take the last layer's hidden state
+    x = self.dropout(x)
+    x = self.fc1(x) # First Dense
+    return self.dnn(x) # Pass forward through fully connected DNN
+  
+  def generate_sequences(self, df: pd.DataFrame, look_back: int, look_forward: int, target_columns, drop_targets=False):
+    '''
+      df: Pandas DataFrame of the univariate time-series
+      tw: Training Window - Integer defining how many steps to look back
+      pw: Prediction Window - Integer defining how many steps forward to predict
 
-        for symbol in symbols:
-            df = pd.DataFrame(index=dates)
-            df_temp = pd.read_csv("../stockTrader/data/{}".format(symbol), index_col='date',
-                    parse_dates=True, usecols=['date', 'close'], na_values=['nan'])
-            df_temp = df_temp.rename(columns={'close': 'value'})
-            df = df.join(df_temp)
-            # df.fillna(df.mean(), inplace=True)
-            df.fillna(method="ffill", inplace=True)
-            # df.interpolate(method='linear', inplace=True)
-            # df.fillna(method='bfill', inplace=True)
+      returns: dictionary of sequences and targets for all sequences
+    '''
+    # data = dict() # Store results into a dictionary
+    # L = len(df)
+    # for i in range(L-look_back):
+    #   # Option to drop target from dataframe
+    #   if drop_targets:
+    #     df.drop(target_columns, axis=1, inplace=True)
 
-            df['value'] = scaler.fit_transform(df['value'].values.reshape(-1,1))
-        
-            # df.plot(figsize=(10, 6), subplots=True)
-            # plt.ylabel("stock_price")
-            # plt.xlabel("date")
-            # plt.legend()
-            # plt.savefig(f"{img_dir}/{symbol}_read.png")
-            datas.append(df)
-        
-        return datas, scaler
+    #   # Get current sequence  
+    #   sequence = df[i:i+look_back].values
+    #   # Get values right after the current sequence
+    #   target = df[i+look_back:i+look_back+look_forward][target_columns].values
+    #   data[i] = {'sequence': sequence, 'target': target}
+    # return data
+    data = dict() 
+    L = len(df)
+    for i in range(L-look_back):
+      sequence = df[i:i+look_back].values
+      # target = df[i+look_back:i+look_back+look_forward][target_columns].values
+      target = df[i+look_back:i+look_back+1][target_columns].values
+      data[i] = {'sequence': sequence, 'target': target}
+    return data
 
+  def normalize(self, df: pd.DataFrame):
+    # scalers = {}
 
-    @staticmethod
-    def eval_metric(predictions: np.ndarray, actuals: np.ndarray):
-        assert(predictions.shape == actuals.shape)
-        mae_loss = np.sum(np.abs(predictions - actuals))
-        
-        return mae_loss
-    
+    # # for x in df.columns:
+    # scalers["close"] = StandardScaler().fit(df["close"].values.reshape(-1, 1))
+  
+    # # print("111")
 
-    def train(
-        self,
-        model_path: str,
-        stock_data: pd.DataFrame,
-        stock_name: str,
-        result_store_dir: str,
-        loss_fn = torch.nn.MSELoss,
-        optimizer_fn = torch.optim.Adam,
-        split_rate: float = 0.2,
-        learning_rate: float = 0.02,
-        look_back: int = 30,
-    ) -> list[torch.Tensor]:
-        # load and preprocess data
-        x_train, y_train, x_test, y_test = LSTM.load_data(stock_data, split_rate, look_back)
+    # # Transform data via scalers
+    # norm_df = df.copy()
+    # # print("there", norm_df.iloc[:, 0].values)
+    # # for i, key in enumerate(scalers.keys()):
+    # #   print(norm_df.iloc[:, i].values)
+    # norm = scalers["close"].transform(norm_df["close"].values.reshape(-1, 1))
+    # norm_df["close"] = norm
 
-        # convert to tensor to allow back propagate
-        x_train_tensor = torch.from_numpy(x_train).type(torch.Tensor)
-        x_test_tensor = torch.from_numpy(x_test).type(torch.Tensor)
-        y_train_tensor = torch.from_numpy(y_train).type(torch.Tensor)
-        y_test_tensor = torch.from_numpy(y_test).type(torch.Tensor)
+    # return norm_df
+    df = df.fillna(method='ffill')
+    scalers = {}
+    norm_df = df.copy()
 
-        # model = LSTM(input_dim=input_dim, hidden_dim=hidden_dim, out_dim=output_dim, num_layers=num_layers)
-        loss_fn = torch.nn.MSELoss()
-        optimizer = optimizer_fn(self.parameters(), lr=learning_rate)
+    for column in df.columns[2:]:
+      scalers[column] = StandardScaler().fit(df[column].values.reshape(-1, 1))
+      norm_df[column] = scalers[column].transform(df[column].values.reshape(-1, 1))
 
-        num_epochs = 500
-        hist = np.zeros(num_epochs)
-        seq_dim =look_back-1 
+    return norm_df
 
-        for e in range(num_epochs):
-            # print(x_train_tensor)
-            y_train_pred = self(x_train_tensor)
-            # print("predicted prices: ", y_train_pred)
+  def load_data(self, df: pd.DataFrame, sequence_len: int, nout: int, isShuffle: bool, BATCH_SIZE: int = 16, split: float = 0.8):
 
-            loss = loss_fn(y_train_pred, y_train_tensor)
-            if e % 10 == 0 and e !=0:
-                print("Epoch ", e, "MSE: ", loss.item())
+    """
+      df:           train data frame
+      sequence_len: number of dates for model to look back
+      nout:         output dimension (same as nfeatures)
+    """
+    # norm_df = self.normalize(df)
+    # sequences = self.generate_sequences(norm_df.close.to_frame(), sequence_len, nout, 'close')
+    # dataset = SequenceDataset(sequences)
 
-            hist[e] = loss.item()
-            optimizer.zero_grad()
+    # # Split the data according to our split ratio and load each subset into a
+    # # separate DataLoader
+    # # train_len = int(len(dataset)*split)
+    # # lens = [train_len, len(dataset)-train_len]
+    # # train_ds, test_ds = random_split(dataset, lens)
+    # trainloader = DataLoader(dataset=dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+    # # testloader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
+    # return trainloader   #, testloader
+    norm_df = self.normalize(df)
+    sequences = self.generate_sequences(norm_df.iloc[:, 2:], sequence_len, nout, target_columns='close')
+    dataset = SequenceDataset(sequences)
+    trainloader = DataLoader(dataset=dataset, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
+    # print(trainloader)
+    return trainloader
 
-            loss.backward()
-            optimizer.step()
-
-        print("Model's state_dict:")
-        for param_tensor in self.state_dict():
-            print(param_tensor, "\t", self.state_dict()[param_tensor].size())
-
-        print("Optimizer's state_dict:")
-        for var_name in optimizer.state_dict():
-            print(var_name, "\t", optimizer.state_dict()[var_name])
-
-        # plt.plot(hist, label="Training loss")
-        # plt.legend()
-        # plt.savefig(f'{result_store_dir}/{stock_name}_training_loss.png')
-        # plt.show()
-
-        torch.save(self.state_dict(), model_path + stock_name)
-        print("Model has been saved to:", model_path + stock_name)
-        return [x_train_tensor, y_train_tensor, x_test_tensor, y_test_tensor]
-
-
-    def predict(self, data_tensors: list[torch.Tensor], stock_name: str, df: pd.DataFrame, scaler: MinMaxScaler, saved_model_path: str = None):
-        """
-        predict data based on 
-        """
-        x_train_tensor, y_train_tensor, x_test_tensor, y_test_tensor = data_tensors
-        model = None
-        if saved_model_path:
-            model = LSTM(hidden_dim=32, input_dim=1, num_layers=2, out_dim=1)
-            model.load_state_dict(torch.load(saved_model_path))
-        else:
-            model = self
-
-        with torch.no_grad():
-            y_train_pred = model(x_train_tensor)
-            y_test_pred = model(x_test_tensor)
-
-        # scaling features to efficiently learn from data
-        # scaler = MinMaxScaler(feature_range=(-1, 1))
-        # invert predictions
-        # scaler.fit(df[['value']])
-
-        # # Transform the data
-        # df['value'] = scaler.transform(df[['value']])
-        y_train_pred = scaler.inverse_transform(y_train_pred.detach().numpy())
-        y_train = scaler.inverse_transform(y_train_tensor.detach().numpy())
-        y_test_pred = scaler.inverse_transform(y_test_pred.detach().numpy())
-        y_test = scaler.inverse_transform(y_test_tensor.detach().numpy())
-
-        figure, axes = plt.subplots(figsize=(15, 6))
-        axes.xaxis_date()
-        # print(type(np.array(df[len(df)-len(y_test):].index)))
-
-        axes.plot(np.array(df[len(df)-len(y_test):].index), y_test, color = 'red', label = 'Real Stock Price')
-        axes.plot(np.array(df[len(df)-len(y_test):].index), y_test_pred, color = 'blue', label = 'Predicted Stock Price')
-        
-        # axes.xticks(np.arange(0,394,50))
-        plt.title('Stock Price Prediction')
-        plt.xlabel('Time')
-        plt.ylabel('Stock Price')
-        plt.legend()
-        plt.savefig(f'{stock_name}_pred.png')
-        plt.show()
-
-        return [y_train_pred, y_test_pred]
+  
+  
