@@ -165,6 +165,9 @@ class LSTM(nn.Module):
     norm_df = self.normalize(df)
     sequences = self.generate_sequences(norm_df.iloc[:, 2:], sequence_len, nout, target_columns='close')
     dataset = SequenceDataset(sequences)
+
+    BATCH_SIZE = len(dataset)
+
     trainloader = DataLoader(dataset=dataset, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
     # print(trainloader)
     return trainloader

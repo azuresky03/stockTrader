@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.nn import MSELoss
 from models.LSTM_Univariant import LSTM
+from models.Sequence import SequenceDataset
 import os
 
 
@@ -14,7 +15,7 @@ DATA_DIR = "./data"
 RES_DIR = "./results"
 
 
-def train(model: LSTM, n_epochs: int, device, trainloader: DataLoader, testloader: DataLoader, save_model_path: str): 
+def train(model: LSTM, n_epochs: int, device, trainloader: DataLoader, testloader: DataLoader, save_model_path: str): #testloader: DataLoader,
     t_losses, v_losses = [], []
     criterion = MSELoss().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
@@ -31,9 +32,7 @@ def train(model: LSTM, n_epochs: int, device, trainloader: DataLoader, testloade
         y  = y.squeeze().to(device)
 
         # Forward Pass
-        # print("check nan: ", np.isnan(x.detach().numpy()).any())
         preds = model(x).squeeze()
-        # print("preds: ", preds.shape)
 
         loss = criterion(preds, y) # compute batch loss
         train_loss += loss.item()
@@ -73,7 +72,7 @@ def make_predictions_from_dataloader(model, unshuffled_dataloader):
   actuals = torch.cat(actuals).numpy()
   return predictions.squeeze(), actuals
 
-def one_step_forecast(model: LSTM, history: pd.DataFrame):
+def one_step_forecast(model: LSTM, history: np.ndarray):
       '''
       model: PyTorch model object
       history: a sequence of values representing the latest values of the time 
@@ -85,53 +84,49 @@ def one_step_forecast(model: LSTM, history: pd.DataFrame):
       model.cpu()
       model.eval()
       with torch.no_grad():
-        # print(history.values)
-        pre = torch.Tensor(history["close"]).unsqueeze(0)
-        print(pre)
+        pre = torch.Tensor(history).unsqueeze(0)
         pred = model(pre)
       return pred.detach().numpy().reshape(-1)
 
 
 def n_step_forecast(model: LSTM, data: pd.DataFrame, target: str, tw: int, n: int, forecast_from: int=None, plot=False):
-      '''
-      n: integer defining how many steps to forecast
-      forecast_from: integer defining which index to forecast from. None if
-      you want to forecast from the end.
-      plot: True if you want to output a plot of the forecast, False if not.
-      '''
-      history = data[target].copy().to_frame()
-      # Create initial sequence input based on where in the series to forecast 
-      # from.
-      if forecast_from:
-        pre = history[forecast_from - tw : forecast_from]
-      else:
-        pre = history[-tw:]
+    '''
+    n: integer defining how many steps to forecast
+    forecast_from: integer defining which index to forecast from. None if
+    you want to forecast from the end.
+    plot: True if you want to output a plot of the forecast, False if not.
+    '''
+    history = data[target].copy().to_frame()
 
-      # Call one_step_forecast n times and append prediction to history
-      for i, step in enumerate(range(n)):
-        pre_ = np.array(pre[-tw:]).reshape(-1, 1)
-        forecast = one_step_forecast(model, pre_).squeeze()
-        np.append(pre, forecast)
-      
-      # The rest of this is just to add the forecast to the correct time of 
-      # the history series
-      res = history.copy()
-      ls = [np.nan for i in range(len(history))]
+    if forecast_from:
+        pre = list(history[forecast_from - tw : forecast_from][target].values)
+    else:
+        pre = list(history[target])[-tw:]
 
-      # Note: I have not handled the edge case where the start index + n is 
-      # before the end of the dataset and crosses past it.
-      if forecast_from:
+
+    for i, step in enumerate(range(n)):
+       pre_ = np.array(pre[-tw:], dtype=np.float64).reshape(-1, 1)
+       forcast = one_step_forecast(model, pre_)
+       pre.append(forcast)
+
+    res = history.copy()
+    ls = [np.nan for i in range(len(history))]
+
+    # Note: I have not handled the edge case where the start index + n is 
+    # before the end of the dataset and crosses past it.
+    if forecast_from:
         ls[forecast_from : forecast_from + n] = list(np.array(pre[-n:]))
         res['forecast'] = ls
         res.columns = ['actual', 'forecast']
-      else:
+    else:
         fc = ls + list(np.array(pre[-n:]))
         ls = ls + [np.nan for i in range(len(pre[-n:]))]
-        ls[:len(history)] = history.values
+        ls[:len(history)] = history[target].values
         res = pd.DataFrame([ls, fc], index=['actual', 'forecast']).T
-      return res
+    return res
 
-def main(if_train=True):
+
+def main():
   df = pd.read_csv('./data/Train万华化学.csv', sep=',')
   test_df = pd.read_csv('./data/Test万华化学.csv', sep=',')
   n_features=1
@@ -145,40 +140,41 @@ def main(if_train=True):
 
 
   model = LSTM(n_features, nhid, nout, sequence_len, n_deep_layers=n_dnn_layers).to(device)
-  if if_train:
-     train_dataloader, test_df = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout)
-     train(model=model, n_epochs = 50, device=device, trainloader=train_dataloader, testloader=test_df, save_model_path='./savedModel/万华化学') # testloader=test_df,
-  else:
-     model.load_state_dict(torch.load('./savedModel/万华化学'))
-     scalar_close = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout, train=False)
+  model.load_state_dict(torch.load('./savedModel/万华化学'))
 
   
-  # train_dataloader = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout)
-  # train(model=model, n_epochs = 50, device=device, trainloader=train_dataloader, save_model_path='./savedModel/万华化学') # testloader=test_df,
+#   train_dataloader, test_dataloader = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout)
+#   train(model=model, n_epochs = 20, device=device, trainloader=train_dataloader, testloader=test_dataloader, save_model_path='./savedModel/万华化学') # testloader=test_df,
 
   #-----------------------------------------
+  num_preds = 30
 
-     predictions = one_step_forecast(model, df).squeeze()
-     predictions = scalar_close.inverse_transform(predictions)
-    # predictions = predictions['close']
-     actuals = np.array(test_df["close"].values[:len(predictions)])
+  res = n_step_forecast(model=model, target="close", data=df, tw=sequence_len, n=num_preds).squeeze()
+
+  print(res)
+
+  # predictions = predictions['close']
+  actuals = np.array(test_df["close"].values[:num_preds])
 
 
-     figure, axes = plt.subplots(figsize=(15, 6))
-     axes.xaxis_date()
+  figure, axes = plt.subplots(figsize=(15, 6))
+  axes.xaxis_date()
 
-     dates = np.array(pd.date_range(start="2020-01-04", periods=len(predictions), freq="B"))
+  dates = np.array(pd.date_range(start="2020-01-04", periods=num_preds, freq="B"))
 
-     axes.plot(dates, actuals, color = 'red', label = 'Real Stock Price')
-     axes.plot(dates, predictions, color = 'blue', label = 'Predicted Stock Price')
-     #axes.xticks(np.arange(0,394,50))
-     plt.title('Stock Price Prediction')
-     plt.xlabel('Time')
-     plt.ylabel('Stock Price')
-     plt.legend()
-     plt.savefig('./plots/万华化学.png')
-    # plt.show()
+  predictions = np.array(res.iloc[:num_preds, :]["forecast"])
+  actuals = np.array(test_df.iloc[:num_preds, :]["close"])
+
+  axes.plot(dates, actuals, color = 'red', label = 'Real Stock Price')
+  axes.plot(dates, predictions, color = 'blue', label = 'Predicted Stock Price')
+  #axes.xticks(np.arange(0,394,50))
+  plt.title('Stock Price Prediction')
+  plt.xlabel('Time')
+  plt.ylabel('Stock Price')
+  plt.legend()
+  plt.savefig('./plots/万华化学.png')
+  # plt.show()
 
   
 if __name__ == "__main__":
-    main(False)
+    main()
