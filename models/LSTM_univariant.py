@@ -132,20 +132,26 @@ class LSTM(nn.Module):
     """
     norm_df, scalar = self.normalize(df)
     sequences = self.generate_sequences(norm_df.close.to_frame(), sequence_len, nout, 'close')
+
+    L = len(df)
+
+
+    print(sequences[L - sequence_len - 1])
     dataset = SequenceDataset(sequences)
 
     # Split the data according to our split ratio and load each subset into a
     # separate DataLoader
     train_len = int(len(dataset)*split)
     lens = [train_len, len(dataset)-train_len]
-    train_ds, test_df = random_split(dataset, lens)
+    train_ds, test_ds = random_split(dataset, lens)
+
     trainloader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
     if isTrain:
-      if len(test_df) != 0 :
-        testloader = DataLoader(test_df, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
-        return trainloader, testloader
+      if len(test_ds) != 0:
+        testloader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
+        return [trainloader, testloader]
       else:
-        return trainloader
+        return [trainloader]
     
     else:
-      return scalar
+      return [scalar]

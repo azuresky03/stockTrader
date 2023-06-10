@@ -14,7 +14,7 @@ DATA_DIR = "./data"
 RES_DIR = "./results"
 
 
-def train(model: LSTM, n_epochs: int, device, trainloader: DataLoader, testloader: DataLoader, save_model_path: str): 
+def train(model: LSTM, n_epochs: int, device, save_model_path: str, trainloader: DataLoader, testloader: DataLoader = None): 
     t_losses, v_losses = [], []
     criterion = MSELoss().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4)
@@ -42,19 +42,20 @@ def train(model: LSTM, n_epochs: int, device, trainloader: DataLoader, testloade
       epoch_loss = train_loss / len(trainloader)
       t_losses.append(epoch_loss)
       
+      if testloader:
       # validation step
-      model.eval()
-      # Loop over validation dataset
-      for x, y in testloader:
-        with torch.no_grad():
-          x, y = x.to(device), y.squeeze().to(device)
-          preds = model(x).squeeze()
-          error = criterion(preds, y)
-        valid_loss += error.item()
-      valid_loss = valid_loss / len(testloader)
-      v_losses.append(valid_loss)
-          
-      print(f'{epoch} - train: {epoch_loss}, valid: {valid_loss}')
+        model.eval()
+        # Loop over validation dataset
+        for x, y in testloader:
+          with torch.no_grad():
+            x, y = x.to(device), y.squeeze().to(device)
+            preds = model(x).squeeze()
+            error = criterion(preds, y)
+          valid_loss += error.item()
+        valid_loss = valid_loss / len(testloader)
+        v_losses.append(valid_loss)
+            
+      print(f'{epoch} - train: {epoch_loss}')
     # plot_losses(t_losses, v_losses)
 
     torch.save(model.state_dict(), save_model_path)
@@ -148,13 +149,13 @@ def main(if_train=True):
   if if_train:
     res = model.load_data(df, isShuffle=True, split=1.0, sequence_len=sequence_len, nout=nout)
     if len(res) == 1:
-      train_dataloader = res
+      train_dataloader = res[0]
     else:
       train_dataloader, test_df = res
-    train(model=model, n_epochs = 300, device=device, trainloader=train_dataloader, testloader=test_df, save_model_path='./savedModel/万华化学') # testloader=test_df,
+    train(model=model, n_epochs = 300, device=device, trainloader=train_dataloader, save_model_path='./savedModel/万华化学') # testloader=test_df,
   else:
      model.load_state_dict(torch.load('./savedModel/万华化学'))
-     scalar_close = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout, train=False)
+    #  scalar_close = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout, train=False)
 
   
   # train_dataloader = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout)
@@ -189,4 +190,4 @@ def main(if_train=True):
 
   
 if __name__ == "__main__":
-    main(True)
+    main(False)
