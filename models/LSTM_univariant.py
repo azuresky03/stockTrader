@@ -123,7 +123,7 @@ class LSTM(nn.Module):
 
     return norm_df, scalers["close"]
   
-  def load_data(self, df: pd.DataFrame, sequence_len: int, nout: int, isShuffle: bool, BATCH_SIZE: int = 16, split: float = 0.8, train: bool = True):
+  def load_data(self, df: pd.DataFrame, sequence_len: int, nout: int, isShuffle: bool, BATCH_SIZE: int = 16, split: float = 0.8, isTrain: bool = True):
 
     """
       df:           train data frame
@@ -138,9 +138,14 @@ class LSTM(nn.Module):
     # separate DataLoader
     train_len = int(len(dataset)*split)
     lens = [train_len, len(dataset)-train_len]
-    train_ds, test_ds = random_split(dataset, lens)
+    train_ds, test_df = random_split(dataset, lens)
     trainloader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
-    testloader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
-    if train:
-      return trainloader, testloader
-    return scalar
+    if isTrain:
+      if len(test_df) != 0 :
+        testloader = DataLoader(test_df, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
+        return trainloader, testloader
+      else:
+        return trainloader
+    
+    else:
+      return scalar

@@ -6,7 +6,7 @@ from sklearn.preprocessing import MinMaxScaler
 import torch
 from torch.utils.data import DataLoader
 from torch.nn import MSELoss
-from models.LSTM_Univariant import LSTM
+from models.LSTM_univariant import LSTM
 import os
 
 
@@ -17,7 +17,7 @@ RES_DIR = "./results"
 def train(model: LSTM, n_epochs: int, device, trainloader: DataLoader, testloader: DataLoader, save_model_path: str): 
     t_losses, v_losses = [], []
     criterion = MSELoss().to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4)
     for epoch in range(n_epochs):
       train_loss, valid_loss = 0.0, 0.0
 
@@ -86,8 +86,8 @@ def one_step_forecast(model: LSTM, history: pd.DataFrame):
       model.eval()
       with torch.no_grad():
         # print(history.values)
-        pre = torch.Tensor(history["close"]).unsqueeze(0)
-        print(pre)
+        pre = torch.Tensor(history).unsqueeze(0)
+        # print(pre)
         pred = model(pre)
       return pred.detach().numpy().reshape(-1)
 
@@ -146,8 +146,12 @@ def main(if_train=True):
 
   model = LSTM(n_features, nhid, nout, sequence_len, n_deep_layers=n_dnn_layers).to(device)
   if if_train:
-     train_dataloader, test_df = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout)
-     train(model=model, n_epochs = 50, device=device, trainloader=train_dataloader, testloader=test_df, save_model_path='./savedModel/万华化学') # testloader=test_df,
+    res = model.load_data(df, isShuffle=True, split=1.0, sequence_len=sequence_len, nout=nout)
+    if len(res) == 1:
+      train_dataloader = res
+    else:
+      train_dataloader, test_df = res
+    train(model=model, n_epochs = 300, device=device, trainloader=train_dataloader, testloader=test_df, save_model_path='./savedModel/万华化学') # testloader=test_df,
   else:
      model.load_state_dict(torch.load('./savedModel/万华化学'))
      scalar_close = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout, train=False)
@@ -158,19 +162,23 @@ def main(if_train=True):
 
   #-----------------------------------------
 
-     predictions = one_step_forecast(model, df).squeeze()
-     predictions = scalar_close.inverse_transform(predictions)
-    # predictions = predictions['close']
-     actuals = np.array(test_df["close"].values[:len(predictions)])
+     predictions = n_step_forecast(model, df, target="close", tw=sequence_len, n=100).squeeze()
+    #  print(predictions)
+    #  predictions = scalar_close.inverse_transform(predictions)
+     actuals = np.array(test_df["close"].values[:100])
 
+    #  print(actuals.shape)
 
      figure, axes = plt.subplots(figsize=(15, 6))
      axes.xaxis_date()
 
-     dates = np.array(pd.date_range(start="2020-01-04", periods=len(predictions), freq="B"))
+     dates = np.array(pd.date_range(start="2020-01-04", periods=len(actuals), freq="B"))
+
+    #  print(len(dates))
+    #  print(len(actuals))
 
      axes.plot(dates, actuals, color = 'red', label = 'Real Stock Price')
-     axes.plot(dates, predictions, color = 'blue', label = 'Predicted Stock Price')
+     axes.plot(dates, predictions["forecast"].values[-100:], color = 'blue', label = 'Predicted Stock Price')
      #axes.xticks(np.arange(0,394,50))
      plt.title('Stock Price Prediction')
      plt.xlabel('Time')
@@ -181,4 +189,4 @@ def main(if_train=True):
 
   
 if __name__ == "__main__":
-    main(False)
+    main(True)
