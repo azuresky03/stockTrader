@@ -1,23 +1,24 @@
-import numpy as np
-import pandas as pd 
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
 plt.style.use('seaborn')
-from sklearn.preprocessing import MinMaxScaler
-import torch
-from torch.utils.data import DataLoader
-from torch.nn import MSELoss
-from models.LSTM_univariant import LSTM
 import os
 
+import torch
+from models.LSTM_univariant import LSTM
+from sklearn.preprocessing import MinMaxScaler
+from torch.nn import MSELoss
+from torch.utils.data import DataLoader
 
 DATA_DIR = "./data"
 RES_DIR = "./results"
 
 
-def train(model: LSTM, n_epochs: int, device, save_model_path: str, trainloader: DataLoader, testloader: DataLoader = None): 
+def train(model: LSTM, n_epochs: int, device, scaler, save_model_path: str, trainloader: DataLoader, testloader: DataLoader = None): 
     t_losses, v_losses = [], []
     criterion = MSELoss().to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
     for epoch in range(n_epochs):
       train_loss, valid_loss = 0.0, 0.0
 
@@ -28,12 +29,18 @@ def train(model: LSTM, n_epochs: int, device, save_model_path: str, trainloader:
         optimizer.zero_grad()
         # move inputs to device
         x = x.to(device)
-        y  = y.squeeze().to(device)
+        y = y.squeeze().to(device)
+
+        # print(x.shape)
 
         # Forward Pass
-        # print("check nan: ", np.isnan(x.detach().numpy()).any())
         preds = model(x).squeeze()
-        # print("preds: ", preds.shape)
+
+        if epoch > 50:
+          real_pred = scaler.inverse_transform(preds.detach().numpy().reshape(-1, 1))
+          real_y = scaler.inverse_transform(y.detach().numpy().reshape(-1, 1))
+          print(f"pred: {real_pred}, real: {real_y}")
+          print(f"diff: {np.sum( np.abs(real_pred - real_y) )}")
 
         loss = criterion(preds, y) # compute batch loss
         train_loss += loss.item()
@@ -55,7 +62,7 @@ def train(model: LSTM, n_epochs: int, device, save_model_path: str, trainloader:
         valid_loss = valid_loss / len(testloader)
         v_losses.append(valid_loss)
             
-      print(f'{epoch} - train: {epoch_loss}')
+      print(f'epoch {epoch + 1} - train loss: {epoch_loss}')
     # plot_losses(t_losses, v_losses)
 
     torch.save(model.state_dict(), save_model_path)
@@ -85,15 +92,16 @@ def one_step_forecast(model: LSTM, history: pd.DataFrame):
       '''
       model.cpu()
       model.eval()
+
+      # print(history)
+
       with torch.no_grad():
-        # print(history.values)
         pre = torch.Tensor(history).unsqueeze(0)
-        # print(pre)
         pred = model(pre)
       return pred.detach().numpy().reshape(-1)
 
 
-def n_step_forecast(model: LSTM, data: pd.DataFrame, target: str, tw: int, n: int, forecast_from: int=None, plot=False):
+def n_step_forecast(model: LSTM, data: pd.DataFrame, true_data: pd.DataFrame, target: str, tw: int, n: int, forecast_from: int=None, plot=False):
       '''
       n: integer defining how many steps to forecast
       forecast_from: integer defining which index to forecast from. None if
@@ -104,15 +112,24 @@ def n_step_forecast(model: LSTM, data: pd.DataFrame, target: str, tw: int, n: in
       # Create initial sequence input based on where in the series to forecast 
       # from.
       if forecast_from:
-        pre = history[forecast_from - tw : forecast_from]
+        pre = list(history[forecast_from - tw : forecast_from][target].values)
       else:
-        pre = history[-tw:]
+        pre = list(history[target].values)[-tw:]
 
+      # print("init pre", pre)
+
+      forecasts = []
       # Call one_step_forecast n times and append prediction to history
       for i, step in enumerate(range(n)):
         pre_ = np.array(pre[-tw:]).reshape(-1, 1)
+        print(pre_.shape)
         forecast = one_step_forecast(model, pre_).squeeze()
-        np.append(pre, forecast)
+        # print(forecast)
+
+        # print(f"{pre_[-1]} vs {forecast}")
+        forecasts.append(forecast)
+        pre.append(true_data.loc[i + forecast_from, "close"])
+        # pre.append(forecast)
       
       # The rest of this is just to add the forecast to the correct time of 
       # the history series
@@ -130,56 +147,56 @@ def n_step_forecast(model: LSTM, data: pd.DataFrame, target: str, tw: int, n: in
         ls = ls + [np.nan for i in range(len(pre[-n:]))]
         ls[:len(history)] = history.values
         res = pd.DataFrame([ls, fc], index=['actual', 'forecast']).T
-      return res
+      
+      return res, np.array(forecasts)
 
-def main(if_train=True):
+def main(num_epoch: int, num_pred: int, isTrain=True):
   df = pd.read_csv('./data/Train万华化学.csv', sep=',')
   test_df = pd.read_csv('./data/Test万华化学.csv', sep=',')
-  n_features=1
+  n_features = 1
   nhid = 50 # Number of nodes in the hidden layer
   n_dnn_layers = 5 # Number of hidden fully connected layers
   nout = 1 # Prediction Window
-  sequence_len = 180 # Training Window
+  sequence_len = 30 # Training Window
 
   USE_CUDA = torch.cuda.is_available()
   device = 'cuda' if USE_CUDA else 'cpu'
 
-
   model = LSTM(n_features, nhid, nout, sequence_len, n_deep_layers=n_dnn_layers).to(device)
-  if if_train:
-    res = model.load_data(df, isShuffle=True, split=1.0, sequence_len=sequence_len, nout=nout)
+  if isTrain:
+    res = model.load_data(df, isShuffle=False, split=1.0, sequence_len=sequence_len, nout=nout)
     if len(res) == 1:
       train_dataloader = res[0]
     else:
-      train_dataloader, test_df = res
-    train(model=model, n_epochs = 300, device=device, trainloader=train_dataloader, save_model_path='./savedModel/万华化学') # testloader=test_df,
+      scaler, train_dataloader = res
+    train(model=model, n_epochs = num_epoch, device=device, scaler=scaler, trainloader=train_dataloader, save_model_path='./savedModel/万华化学.pt') # testloader=test_df,
   else:
-     model.load_state_dict(torch.load('./savedModel/万华化学'))
-    #  scalar_close = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout, train=False)
+     model.load_state_dict(torch.load('./savedModel/万华化学.pt'))
+     scalar_close, dataloader = model.load_data(df, isShuffle=False, sequence_len=sequence_len, nout=nout, isTrain=True)
+
 
   
   # train_dataloader = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout)
   # train(model=model, n_epochs = 50, device=device, trainloader=train_dataloader, save_model_path='./savedModel/万华化学') # testloader=test_df,
 
   #-----------------------------------------
+     _, predictions = n_step_forecast(model, df, target="close", tw=sequence_len, true_data=df, n=num_pred, forecast_from=100)
+    #  predictions, _ = n_step_forecast(model, df, target="close", tw=sequence_len, true_data=test_df, n=num_pred)
 
-     predictions = n_step_forecast(model, df, target="close", tw=sequence_len, n=100).squeeze()
-    #  print(predictions)
-    #  predictions = scalar_close.inverse_transform(predictions)
-     actuals = np.array(test_df["close"].values[:100])
+    #  unormalized = scalar_close.inverse_transform(predictions.loc[predictions.index[-num_pred:], "forecast"].values.reshape(-1, 1))
+    #  predictions.loc[predictions.index[-num_pred:], "forecast"] = np.array(unormalized).flatten()
+     predictions = scalar_close.inverse_transform(predictions.reshape(-1, 1))
 
-    #  print(actuals.shape)
+     actuals = np.array(test_df["close"].values[:num_pred])
 
      figure, axes = plt.subplots(figsize=(15, 6))
      axes.xaxis_date()
 
      dates = np.array(pd.date_range(start="2020-01-04", periods=len(actuals), freq="B"))
 
-    #  print(len(dates))
-    #  print(len(actuals))
-
      axes.plot(dates, actuals, color = 'red', label = 'Real Stock Price')
-     axes.plot(dates, predictions["forecast"].values[-100:], color = 'blue', label = 'Predicted Stock Price')
+     axes.plot(dates, predictions, color = 'blue', label = 'Predicted Stock Price')
+    #  axes.plot(dates, predictions["forecast"].values[-num_pred:], color = 'blue', label = 'Predicted Stock Price')
      #axes.xticks(np.arange(0,394,50))
      plt.title('Stock Price Prediction')
      plt.xlabel('Time')
@@ -190,4 +207,14 @@ def main(if_train=True):
 
   
 if __name__ == "__main__":
-    main(False)
+    # main(
+    #    num_epoch=250,
+    #    num_pred=60,
+    #    isTrain=True
+    # )
+
+    main(
+      num_epoch=20,
+      num_pred=60,
+      isTrain=False
+    )

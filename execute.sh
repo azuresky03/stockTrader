@@ -1,1 +1,1 @@
-python3 tftNoOnline.py
+python3 train.py

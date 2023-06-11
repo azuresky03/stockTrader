@@ -20,7 +20,7 @@ from models.Sequence import SequenceDataset
 
 class LSTM(nn.Module):
   
-  def __init__(self, n_features, n_hidden, n_outputs, sequence_len, n_lstm_layers=1, n_deep_layers=10, use_cuda=False, dropout=0.2):
+  def __init__(self, n_features, n_hidden, n_outputs, sequence_len, n_lstm_layers=2, n_deep_layers=10, use_cuda=False, dropout=0.4):
     '''
       n_features: number of input features (1 for univariate forecasting)
       n_hidden: number of neurons in each hidden layer
@@ -42,8 +42,8 @@ class LSTM(nn.Module):
                         batch_first=True) # As we have transformed our data in this way
     
     # first dense after lstm
-    self.fc1 = nn.Linear(n_hidden * sequence_len, n_hidden) 
-    # self.fc1 = nn.Linear(n_hidden, n_hidden)
+    self.fc1 = nn.Linear(n_hidden * sequence_len, n_hidden)
+
     # Dropout layer 
     self.dropout = nn.Dropout(p=dropout)
 
@@ -72,7 +72,7 @@ class LSTM(nn.Module):
     if self.use_cuda:
       hidden_state = hidden_state.to(self.device)
       cell_state = cell_state.to(self.device)
-        
+    
     self.hidden = (hidden_state, cell_state)
     # self.hidden = (torch.zeros(self.num_layers, 1, self.hidden_layer_size),
     #            torch.zeros(self.num_layers, 1, self.hidden_layer_size))
@@ -80,7 +80,7 @@ class LSTM(nn.Module):
     # Forward Pass
     x, h = self.lstm(x, self.hidden) # LSTM
     x = self.dropout(x.contiguous().view(x.shape[0], -1)) # Flatten lstm out 
-    x = self.fc1(x) # First Dense
+    x = self.fc1(x)    # First Dense
     return self.dnn(x) # Pass forward through fully connected DNN
   
   def generate_sequences(self, df: pd.DataFrame, look_back: int, look_forward: int, target_columns, drop_targets=False):
@@ -93,16 +93,16 @@ class LSTM(nn.Module):
     '''
     data = dict() # Store results into a dictionary
     L = len(df)
-    for i in range(L-look_back):
+    for i in range(look_back, L):
       # Option to drop target from dataframe
       if drop_targets:
         df.drop(target_columns, axis=1, inplace=True)
 
       # Get current sequence  
-      sequence = df[i:i+look_back].values
+      sequence = df[i-look_back:i].values
       # Get values right after the current sequence
-      target = df[i+look_back:i+look_back+look_forward][target_columns].values
-      data[i] = {'sequence': sequence, 'target': target}
+      target = df[i:i+look_forward][target_columns].values
+      data[i-look_back] = {'sequence': sequence, 'target': target}
     return data
   
   def normalize(self, df: pd.DataFrame):
@@ -111,11 +111,9 @@ class LSTM(nn.Module):
     # for x in df.columns:
     scalers["close"] = StandardScaler().fit(df["close"].values.reshape(-1, 1))
   
-    # print("111")
-
     # Transform data via scalers
     norm_df = df.copy()
-    # print("there", norm_df.iloc[:, 0].values)
+
     # for i, key in enumerate(scalers.keys()):
     #   print(norm_df.iloc[:, i].values)
     norm = scalers["close"].transform(norm_df["close"].values.reshape(-1, 1))
@@ -133,25 +131,16 @@ class LSTM(nn.Module):
     norm_df, scalar = self.normalize(df)
     sequences = self.generate_sequences(norm_df.close.to_frame(), sequence_len, nout, 'close')
 
-    L = len(df)
-
-
-    print(sequences[L - sequence_len - 1])
     dataset = SequenceDataset(sequences)
 
     # Split the data according to our split ratio and load each subset into a
     # separate DataLoader
     train_len = int(len(dataset)*split)
-    lens = [train_len, len(dataset)-train_len]
-    train_ds, test_ds = random_split(dataset, lens)
+    # lens = [train_len, len(dataset)-train_len]
+    # train_ds, test_ds = random_split(dataset, lens)
 
-    trainloader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
     if isTrain:
-      if len(test_ds) != 0:
-        testloader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
-        return [trainloader, testloader]
-      else:
-        return [trainloader]
-    
+      trainloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
+      return [scalar, trainloader]
     else:
       return [scalar]
