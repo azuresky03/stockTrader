@@ -1,5 +1,4 @@
 import random
-
 import numpy as np
 import pandas as pd
 from pylab import mpl, plt
@@ -78,8 +77,8 @@ class LSTM(nn.Module):
     #            torch.zeros(self.num_layers, 1, self.hidden_layer_size))
 
     # Forward Pass
-    x, h = self.lstm(x, self.hidden) # LSTM
-    x = self.dropout(x.contiguous().view(x.shape[0], -1)) # Flatten lstm out 
+    x, h = self.lstm(x, self.hidden)                      # LSTM
+    x = self.dropout(x.contiguous().view(x.shape[0], -1)) # Flatten lstm out
     x = self.fc1(x)    # First Dense
     return self.dnn(x) # Pass forward through fully connected DNN
   
@@ -109,7 +108,7 @@ class LSTM(nn.Module):
     scalers = {}
 
     # for x in df.columns:
-    scalers["close"] = StandardScaler().fit(df["close"].values.reshape(-1, 1))
+    scalers["close"] = MinMaxScaler().fit(df["close"].values.reshape(-1, 1))
   
     # Transform data via scalers
     norm_df = df.copy()
@@ -122,19 +121,18 @@ class LSTM(nn.Module):
     return norm_df, scalers["close"]
   
   def load_data(self, df: pd.DataFrame, sequence_len: int, nout: int, isShuffle: bool, BATCH_SIZE: int = 16, split: float = 0.8, isTrain: bool = True):
-
     """
       df:           train data frame
       sequence_len: number of dates for model to look back
       nout:         output dimension (same as nfeatures)
     """
+    df = df.fillna(method="ffill")
     norm_df, scalar = self.normalize(df)
     sequences = self.generate_sequences(norm_df.close.to_frame(), sequence_len, nout, 'close')
 
     dataset = SequenceDataset(sequences)
 
-    # Split the data according to our split ratio and load each subset into a
-    # separate DataLoader
+    # Split the data according to our split ratio and load each subset into a separate DataLoader
     train_len = int(len(dataset)*split)
     # lens = [train_len, len(dataset)-train_len]
     # train_ds, test_ds = random_split(dataset, lens)

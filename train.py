@@ -15,13 +15,16 @@ DATA_DIR = "./data"
 RES_DIR = "./results"
 
 
-def train(model: LSTM, n_epochs: int, device, scaler, save_model_path: str, trainloader: DataLoader, testloader: DataLoader = None): 
+def train(model: LSTM, n_epochs: int, device, scaler: MinMaxScaler, save_model_path: str, trainloader: DataLoader, testloader: DataLoader = None): 
     t_losses, v_losses = [], []
     criterion = MSELoss().to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4)
+
+    last_epoch = []
     for epoch in range(n_epochs):
       train_loss, valid_loss = 0.0, 0.0
 
+      
       # train step
       model.train()
       # Loop over train dataset
@@ -31,16 +34,19 @@ def train(model: LSTM, n_epochs: int, device, scaler, save_model_path: str, trai
         x = x.to(device)
         y = y.squeeze().to(device)
 
-        # print(x.shape)
-
         # Forward Pass
         preds = model(x).squeeze()
+        # print(preds.detach().numpy().shape)
+        # if epoch > 50:
+        #   real_pred = scaler.inverse_transform(preds.detach().numpy().reshape(-1, 1))
+        #   real_y = scaler.inverse_transform(y.detach().numpy().reshape(-1, 1))
+        #   print(f"pred: {real_pred}, real: {real_y}")
+        #   print(f"diff: {np.sum( np.abs(real_pred - real_y) )}")
 
-        if epoch > 50:
-          real_pred = scaler.inverse_transform(preds.detach().numpy().reshape(-1, 1))
-          real_y = scaler.inverse_transform(y.detach().numpy().reshape(-1, 1))
-          print(f"pred: {real_pred}, real: {real_y}")
-          print(f"diff: {np.sum( np.abs(real_pred - real_y) )}")
+        if epoch == n_epochs - 1:
+          pred_numpy = preds.detach().numpy()
+          inversed_pred = scaler.inverse_transform(pred_numpy.reshape(-1, 1))
+          last_epoch.append(inversed_pred)
 
         loss = criterion(preds, y) # compute batch loss
         train_loss += loss.item()
@@ -68,6 +74,10 @@ def train(model: LSTM, n_epochs: int, device, scaler, save_model_path: str, trai
     torch.save(model.state_dict(), save_model_path)
     print("Model is saved to:", save_model_path)
 
+    print("len of last epoch ", len(last_epoch))
+    print(len(last_epoch[0]), type(last_epoch[0]))
+    return np.array(last_epoch)
+
 
 def make_predictions_from_dataloader(model, unshuffled_dataloader):
   model.eval()
@@ -81,6 +91,7 @@ def make_predictions_from_dataloader(model, unshuffled_dataloader):
   actuals = torch.cat(actuals).numpy()
   return predictions.squeeze(), actuals
 
+
 def one_step_forecast(model: LSTM, history: pd.DataFrame):
       '''
       model: PyTorch model object
@@ -92,8 +103,6 @@ def one_step_forecast(model: LSTM, history: pd.DataFrame):
       '''
       model.cpu()
       model.eval()
-
-      # print(history)
 
       with torch.no_grad():
         pre = torch.Tensor(history).unsqueeze(0)
@@ -150,31 +159,61 @@ def n_step_forecast(model: LSTM, data: pd.DataFrame, true_data: pd.DataFrame, ta
       
       return res, np.array(forecasts)
 
-def main(num_epoch: int, num_pred: int, isTrain=True):
-  df = pd.read_csv('./data/Train万华化学.csv', sep=',')
-  test_df = pd.read_csv('./data/Test万华化学.csv', sep=',')
+def process_single_file(num_epoch: int, num_pred: int, train_file: str, test_file: str, isTrain=True):
+  df = pd.read_csv(f'./data/{train_file}.csv', sep=',')
+  test_df = pd.read_csv(f'./data/{test_file}.csv', sep=',')
+  test_df = pd.concat([df, test_df], axis=0)
+  combined_df = test_df.fillna(method='ffill')
+  # print(combined_df)
+  
+  # print(test_df)
   n_features = 1
-  nhid = 50 # Number of nodes in the hidden layer
-  n_dnn_layers = 5 # Number of hidden fully connected layers
-  nout = 1 # Prediction Window
-  sequence_len = 30 # Training Window
+  nhid = 50         # Number of nodes in the hidden layer
+  n_dnn_layers = 5  # Number of hidden fully connected layers
+  nout = 1          # Prediction Window
+  sequence_len = 180 # Training Window
 
   USE_CUDA = torch.cuda.is_available()
   device = 'cuda' if USE_CUDA else 'cpu'
 
   model = LSTM(n_features, nhid, nout, sequence_len, n_deep_layers=n_dnn_layers).to(device)
   if isTrain:
-    res = model.load_data(df, isShuffle=False, split=1.0, sequence_len=sequence_len, nout=nout)
+    res = model.load_data(combined_df, isShuffle=False, split=1.0, sequence_len=sequence_len, nout=nout)
     if len(res) == 1:
       train_dataloader = res[0]
     else:
       scaler, train_dataloader = res
-    train(model=model, n_epochs = num_epoch, device=device, scaler=scaler, trainloader=train_dataloader, save_model_path='./savedModel/万华化学.pt') # testloader=test_df,
+    last_epoch = train(model=model, n_epochs = num_epoch, device=device, scaler=scaler, trainloader=train_dataloader, save_model_path='./savedModel/万华化学.pt') # testloader=test_df,
+    last_epoch = last_epoch.flatten()
+    # print(last_epoch.shape)
+
+    dates = np.array(pd.date_range(start="2014-06-03", periods=len(last_epoch), freq='B'))
+
+    new_df = pd.DataFrame(index=dates)
+    # new_df = pd.DataFrame(last_epoch)
+    # print(new_df)
+    new_df["close"] = last_epoch
+
+    train_file
+    new_df.to_csv(f"./predictions/{train_file[5:]}_pred.csv")
+    # figure, axes = plt.subplots(figsize=(15, 6))
+    # axes.xaxis_date()
+
+    # actuals = np.array(test_df["close"].values[:num_pred])
+    # dates = np.array(pd.date_range(start="2020-01-04", periods=len(actuals), freq="B"))
+
+    # axes.plot(dates, actuals, color = 'red', label = 'Real Stock Price')
+    # axes.plot(dates, new_df, color = 'blue', label = 'Predicted Stock Price')
+    # #  axes.plot(dates, predictions["forecast"].values[-num_pred:], color = 'blue', label = 'Predicted Stock Price')
+    #  #axes.xticks(np.arange(0,394,50))
+    # plt.title('Stock Price Prediction')
+    # plt.xlabel('Time')
+    # plt.ylabel('Stock Price')
+    # plt.legend()
+    # plt.savefig('./plots/万华化学.png')
   else:
      model.load_state_dict(torch.load('./savedModel/万华化学.pt'))
      scalar_close, dataloader = model.load_data(df, isShuffle=False, sequence_len=sequence_len, nout=nout, isTrain=True)
-
-
   
   # train_dataloader = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout)
   # train(model=model, n_epochs = 50, device=device, trainloader=train_dataloader, save_model_path='./savedModel/万华化学') # testloader=test_df,
@@ -205,16 +244,21 @@ def main(num_epoch: int, num_pred: int, isTrain=True):
      plt.savefig('./plots/万华化学.png')
     # plt.show()
 
+def main():
+  dir = "./data"
+  train_files, test_files = [], []
+  for file in os.listdir(dir):
+    name, end = file.split(".")
+    if end == "csv":
+      if name[1] == "e":
+        test_files.append(name)
+      else:
+        train_files.append(name)
+  
+  for i in range(len(train_files)):
+    train_file, test_file = train_files[i], test_files[i]
+    process_single_file(num_epoch=1, num_pred=60, train_file=train_file, test_file=test_file, isTrain=True)
+
   
 if __name__ == "__main__":
-    # main(
-    #    num_epoch=250,
-    #    num_pred=60,
-    #    isTrain=True
-    # )
-
-    main(
-      num_epoch=20,
-      num_pred=60,
-      isTrain=False
-    )
+    main()
