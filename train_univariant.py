@@ -89,7 +89,7 @@ def one_step_forecast(model: LSTM, history: np.ndarray):
       return pred.detach().numpy().reshape(-1)
 
 
-def n_step_forecast(model: LSTM, data: pd.DataFrame, target: str, tw: int, n: int, forecast_from: int=None, plot=False):
+def n_step_forecast(model: LSTM, data: pd.DataFrame, true_data: pd.DataFrame, target: str, tw: int, n: int, forecast_from: int=None, plot=False):
     '''
     n: integer defining how many steps to forecast
     forecast_from: integer defining which index to forecast from. None if
@@ -129,29 +129,26 @@ def n_step_forecast(model: LSTM, data: pd.DataFrame, target: str, tw: int, n: in
 def main():
   df = pd.read_csv('./data/Train万华化学.csv', sep=',')
   test_df = pd.read_csv('./data/Test万华化学.csv', sep=',')
-  n_features=1
-  nhid = 50 # Number of nodes in the hidden layer
-  n_dnn_layers = 5 # Number of hidden fully connected layers
-  nout = 1 # Prediction Window
-  sequence_len = 180 # Training Window
+  n_features= 12          # input features       dropped "adjustflag", "date" - reference_date, "turn"
+  nhid = 64               # Number of nodes in the hidden layer
+  n_dnn_layers = 5        # Number of hidden fully connected layers
+  nout = 1                # Prediction Window
+  sequence_len = 100      # Training Window
+  num_preds = 30          # predictions 
 
   USE_CUDA = torch.cuda.is_available()
   device = 'cuda' if USE_CUDA else 'cpu'
 
-
   model = LSTM(n_features, nhid, nout, sequence_len, n_deep_layers=n_dnn_layers).to(device)
-  model.load_state_dict(torch.load('./savedModel/万华化学'))
+  # model.load_state_dict(torch.load('./savedModel/万华化学'))
 
-  
-#   train_dataloader, test_dataloader = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout)
-#   train(model=model, n_epochs = 20, device=device, trainloader=train_dataloader, testloader=test_dataloader, save_model_path='./savedModel/万华化学') # testloader=test_df,
+  train_dataloader, test_dataloader = model.load_data(df, isShuffle=False, sequence_len=sequence_len, nout=nout)
+  train(model=model, n_epochs = 20, device=device, trainloader=train_dataloader, testloader=test_dataloader, save_model_path='./savedModel/万华化学') # testloader=test_df,
 
   #-----------------------------------------
-  num_preds = 30
 
-  res = n_step_forecast(model=model, target="close", data=df, tw=sequence_len, n=num_preds).squeeze()
+  res = n_step_forecast(model=model, target="close", data=df, true_data=test_df, tw=sequence_len, n=num_preds).squeeze()
 
-  print(res)
 
   # predictions = predictions['close']
   actuals = np.array(test_df["close"].values[:num_preds])

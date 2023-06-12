@@ -82,7 +82,7 @@ class LSTM(nn.Module):
     x = self.fc1(x)    # First Dense
     return self.dnn(x) # Pass forward through fully connected DNN
   
-  def generate_sequences(self, df: pd.DataFrame, look_back: int, look_forward: int, target_columns, drop_targets=False):
+  def generate_sequences(self, df: pd.DataFrame, look_back: int, look_forward: int, target_columns = None, drop_targets=False):
     '''
       df: Pandas DataFrame of the univariate time-series
       tw: Training Window - Integer defining how many steps to look back
@@ -100,6 +100,8 @@ class LSTM(nn.Module):
       # Get current sequence  
       sequence = df[i-look_back:i].values
       # Get values right after the current sequence
+
+      # TODO: adjust sequences for multiple features
       target = df[i:i+look_forward][target_columns].values
       data[i-look_back] = {'sequence': sequence, 'target': target}
     return data
@@ -120,14 +122,18 @@ class LSTM(nn.Module):
 
     return norm_df, scalers["close"]
   
-  def load_data(self, df: pd.DataFrame, sequence_len: int, nout: int, isShuffle: bool, BATCH_SIZE: int = 16, split: float = 0.8, isTrain: bool = True):
+  def load_data(self, df: pd.DataFrame, sequence_len: int, nout: int, reference_date: pd.Timestamp, isShuffle: bool = False, BATCH_SIZE: int = 16, split: float = 0.8, isTrain: bool = True):
     """
       df:           train data frame
       sequence_len: number of dates for model to look back
       nout:         output dimension (same as nfeatures)
     """
+    # select only useful features and fill NaNs
+    df.drop(["code", "turn"])
+    df["date"] = np.array(df["date"].values) - np.array([reference_date for _ in range(len(df["date"].values))])
     df = df.fillna(method="ffill")
     norm_df, scalar = self.normalize(df)
+
     sequences = self.generate_sequences(norm_df.close.to_frame(), sequence_len, nout, 'close')
 
     dataset = SequenceDataset(sequences)
