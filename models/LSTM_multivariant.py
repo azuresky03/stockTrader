@@ -2,24 +2,20 @@ import random
 import numpy as np
 import pandas as pd
 from pylab import mpl, plt
-
-plt.style.use('seaborn')
-
+plt.style.use("seaborn-v0_8")
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset, random_split
 from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import MinMaxScaler
 from torch.autograd import Variable
-from sklearn.preprocessing import StandardScaler
 from models.Sequence import SequenceDataset
-
 
 
 
 class LSTM(nn.Module):
   
-  def __init__(self, n_features, n_hidden, n_outputs, sequence_len, n_lstm_layers=2, n_deep_layers=10, use_cuda=False, dropout=0.4):
+  def __init__(self, n_features, n_hidden, n_outputs, sequence_len, n_lstm_layers=2, n_deep_layers=10, use_cuda=False, dropout=0.2):
     '''
       n_features: number of input features (1 for univariate forecasting)
       n_hidden: number of neurons in each hidden layer
@@ -46,14 +42,12 @@ class LSTM(nn.Module):
     # Dropout layer 
     self.dropout = nn.Dropout(p=dropout)
 
-    # Create fully connected layers (n_hidden x n_deep_layers)
+    # Create fully connected layers (n_hidden, n_deep_layers)
     dnn_layers = []
     for i in range(n_deep_layers):
-      # Last layer (n_hidden x n_outputs)
       if i == n_deep_layers - 1:
         dnn_layers.append(nn.ReLU())
         dnn_layers.append(nn.Linear(self.nhid, n_outputs))
-      # All other layers (n_hidden x n_hidden) with dropout option
       else:
         dnn_layers.append(nn.ReLU())
         dnn_layers.append(nn.Linear(self.nhid, self.nhid))
@@ -73,14 +67,13 @@ class LSTM(nn.Module):
       cell_state = cell_state.to(self.device)
     
     self.hidden = (hidden_state, cell_state)
-    # self.hidden = (torch.zeros(self.num_layers, 1, self.hidden_layer_size),
-    #            torch.zeros(self.num_layers, 1, self.hidden_layer_size))
 
     # Forward Pass
-    x, h = self.lstm(x, self.hidden)                      # LSTM
-    x = self.dropout(x.contiguous().view(x.shape[0], -1)) # Flatten lstm out
-    x = self.fc1(x)    # First Dense
-    return self.dnn(x) # Pass forward through fully connected DNN
+    x, h = self.lstm(x, self.hidden)                       # LSTM
+    x = self.dropout(x.contiguous().view(x.shape[0], -1))  # Flatten lstm out
+    x = self.fc1(x)                                        # First Dense
+    return self.dnn(x)                                     # Pass forward through fully connected DNN
+  
   
   def generate_sequences(self, df: pd.DataFrame, look_back: int, look_forward: int, target_columns = None, drop_targets=False):
     '''
@@ -90,7 +83,7 @@ class LSTM(nn.Module):
 
       returns: dictionary of sequences and targets for all sequences
     '''
-    data = dict() # Store results into a dictionary
+    data = dict()                                  # Store results into a dictionary
     L = len(df)
     for i in range(look_back, L):
       # Option to drop target from dataframe
@@ -102,49 +95,54 @@ class LSTM(nn.Module):
       # Get values right after the current sequence
 
       # TODO: adjust sequences for multiple features
-      target = df[i:i+look_forward][target_columns].values
+      target = df[i:i+look_forward]["close"].values
       data[i-look_back] = {'sequence': sequence, 'target': target}
     return data
   
-  def normalize(self, df: pd.DataFrame):
-    scalers = {}
-
-    # for x in df.columns:
-    scalers["close"] = MinMaxScaler().fit(df["close"].values.reshape(-1, 1))
   
-    # Transform data via scalers
+  def normalize(self, df: pd.DataFrame, reference_date):
+    # normalize all columnns
+    scalars = {}
+    prices = np.array(df["close"].values)
+    changes = prices[1:] - prices[:-1]
+
+    # remove last row since we don't know the price of the date after
+    df = df.iloc[:-1, :]
+    df.loc[:, "date"] = [
+        delta_time.days for delta_time in ( np.array([pd.to_datetime(date) for date in df["date"].values]) - np.array([reference_date for _ in range(len(df["date"].values))]) ) 
+    ]
+    df.loc[:, "close"] = changes.flatten()
     norm_df = df.copy()
 
-    # for i, key in enumerate(scalers.keys()):
-    #   print(norm_df.iloc[:, i].values)
-    norm = scalers["close"].transform(norm_df["close"].values.reshape(-1, 1))
-    norm_df["close"] = norm
-
-    return norm_df, scalers["close"]
+    for col in df.columns:
+      scalars[col] = MinMaxScaler().fit(df[col].values.reshape(-1, 1))
+      normalized_val = scalars[col].transform(norm_df[col].values.reshape(-1, 1))
+      norm_df[col] = normalized_val
+  
+    return norm_df, scalars
+  
   
   def load_data(self, df: pd.DataFrame, sequence_len: int, nout: int, reference_date: pd.Timestamp, isShuffle: bool = False, BATCH_SIZE: int = 16, split: float = 0.8, isTrain: bool = True):
     """
-      df:           train data frame
-      sequence_len: number of dates for model to look back
-      nout:         output dimension (same as nfeatures)
+    df:           train data frame
+    sequence_len: number of dates for model to look back
+    nout:         output dimension (same as nfeatures)
     """
     # select only useful features and fill NaNs
-    df.drop(["code", "turn"])
-    df["date"] = np.array(df["date"].values) - np.array([reference_date for _ in range(len(df["date"].values))])
+    df = df.drop(labels=["code", "turn", "adjustflag", "isST", "tradestatus"], axis=1)
     df = df.fillna(method="ffill")
-    norm_df, scalar = self.normalize(df)
+    norm_df, scalars = self.normalize(df, reference_date)
 
-    sequences = self.generate_sequences(norm_df.close.to_frame(), sequence_len, nout, 'close')
-
+    sequences = self.generate_sequences(norm_df, sequence_len, nout)
     dataset = SequenceDataset(sequences)
 
     # Split the data according to our split ratio and load each subset into a separate DataLoader
-    train_len = int(len(dataset)*split)
+    train_len = int(len(dataset) * split)
     # lens = [train_len, len(dataset)-train_len]
     # train_ds, test_ds = random_split(dataset, lens)
 
     if isTrain:
       trainloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=isShuffle, drop_last=True)
-      return [scalar, trainloader]
+      return [scalars, trainloader]
     else:
-      return [scalar]
+      return [scalars]

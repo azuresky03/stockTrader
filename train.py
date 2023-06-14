@@ -1,12 +1,10 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
 plt.style.use('seaborn')
 import os
-
 import torch
-from models.LSTM_univariant import LSTM
+from models.LSTM_multivariant import LSTM
 from sklearn.preprocessing import MinMaxScaler
 from torch.nn import MSELoss
 from torch.utils.data import DataLoader
@@ -15,14 +13,14 @@ DATA_DIR = "./data"
 RES_DIR = "./results"
 
 
-def train(model: LSTM, n_epochs: int, device, scaler: MinMaxScaler, save_model_path: str, trainloader: DataLoader, testloader: DataLoader = None): 
+def train(model: LSTM, n_epochs: int, device, scalers: MinMaxScaler, save_model_path: str, trainloader: DataLoader, testloader: DataLoader = None): 
     t_losses, v_losses = [], []
     criterion = MSELoss().to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+    n_batches = len(trainloader)
 
-    last_epoch = []
     for epoch in range(n_epochs):
-      train_loss, valid_loss = 0.0, 0.0
+      train_loss, valid_loss, real_loss = 0.0, 0.0, 0.0
 
       # train step
       model.train()
@@ -35,23 +33,18 @@ def train(model: LSTM, n_epochs: int, device, scaler: MinMaxScaler, save_model_p
 
         # Forward Pass
         preds = model(x).squeeze()
-        # print(preds.detach().numpy().shape)
-        # if epoch > 50:
-        #   real_pred = scaler.inverse_transform(preds.detach().numpy().reshape(-1, 1))
-        #   real_y = scaler.inverse_transform(y.detach().numpy().reshape(-1, 1))
-        #   print(f"pred: {real_pred}, real: {real_y}")
-        #   print(f"diff: {np.sum( np.abs(real_pred - real_y) )}")
+        pred_numpy = preds.detach().numpy()
+        inversed_preds = scalers["close"].inverse_transform(pred_numpy.reshape(-1, 1))
+        inversed_y = scalers["close"].inverse_transform(y.detach().numpy().reshape(-1, 1))
 
-        if epoch == n_epochs - 1:
-          pred_numpy = preds.detach().numpy()
-          inversed_pred = scaler.inverse_transform(pred_numpy.reshape(-1, 1))
-          last_epoch.append(inversed_pred)
+        loss = criterion(preds, y)  # compute batch loss
+        real_loss += np.sum( np.abs(inversed_y - inversed_preds) )
 
-        loss = criterion(preds, y) # compute batch loss
         train_loss += loss.item()
         loss.backward()
         optimizer.step()
-      epoch_loss = train_loss / len(trainloader)
+      epoch_loss = train_loss / n_batches
+      epoch_mae = real_loss / n_batches
       t_losses.append(epoch_loss)
       
       if testloader:
@@ -66,13 +59,12 @@ def train(model: LSTM, n_epochs: int, device, scaler: MinMaxScaler, save_model_p
           valid_loss += error.item()
         valid_loss = valid_loss / len(testloader)
         v_losses.append(valid_loss)
-            
-      print(f'epoch {epoch + 1} - train loss: {epoch_loss}')
+      
+      print(f'epoch {epoch + 1} --> train loss: {epoch_loss}, real mae loss: {epoch_mae}')
     # plot_losses(t_losses, v_losses)
 
     torch.save(model.state_dict(), save_model_path)
     print("Model is saved to:", save_model_path)
-    return np.array(last_epoch)
 
 
 def make_predictions_from_dataloader(model, unshuffled_dataloader):
@@ -121,6 +113,7 @@ def n_step_forecast(model: LSTM, data: pd.DataFrame, true_data: pd.DataFrame, ta
       else:
         pre = list(history[target].values)[-tw:]
 
+      # TODO: getting this part working
       forecasts = []
       # Call one_step_forecast n times and append prediction to history
       for i, step in enumerate(range(n)):
@@ -130,15 +123,12 @@ def n_step_forecast(model: LSTM, data: pd.DataFrame, true_data: pd.DataFrame, ta
 
         forecasts.append(forecast)
         pre.append(true_data.loc[i + forecast_from, "close"])
-        # pre.append(forecast)
       
       # The rest of this is just to add the forecast to the correct time of 
       # the history series
       res = history.copy()
       ls = [np.nan for i in range(len(history))]
 
-      # Note: I have not handled the edge case where the start index + n is 
-      # before the end of the dataset and crosses past it.
       if forecast_from:
         ls[forecast_from : forecast_from + n] = list(np.array(pre[-n:]))
         res['forecast'] = ls
@@ -151,42 +141,44 @@ def n_step_forecast(model: LSTM, data: pd.DataFrame, true_data: pd.DataFrame, ta
       
       return res, np.array(forecasts)
 
-def process_single_file(num_epoch: int, num_pred: int, train_file: str, test_file: str, isTrain=True):
+def process_single_stock(num_epoch: int, num_pred: int, train_file: str, test_file: str, isTrain=True):
   df = pd.read_csv(f'./data/{train_file}.csv', sep=',')
   test_df = pd.read_csv(f'./data/{test_file}.csv', sep=',')
   test_df = pd.concat([df, test_df], axis=0)
   combined_df = test_df.fillna(method='ffill')
-  # print(combined_df)
-  
-  # print(test_df)
-  n_features = 1
-  nhid = 50           # Number of nodes in the hidden layer
-  n_dnn_layers = 5    # Number of hidden fully connected layers
+  reference_date = pd.to_datetime("2014-06-03")
+
+  n_features = 9
+  nhid = 64          # Number of nodes in the hidden layer
+  n_lstm_layers = 3
+  n_dnn_layers = 3    # Number of hidden fully connected layers
   nout = 1            # Prediction Window
-  sequence_len = 180  # Training Window
+  sequence_len = 60   # Training Window
 
   USE_CUDA = torch.cuda.is_available()
   device = 'cuda' if USE_CUDA else 'cpu'
 
-  model = LSTM(n_features, nhid, nout, sequence_len, n_deep_layers=n_dnn_layers).to(device)
+  model = LSTM(n_features, nhid, nout, n_lstm_layers=n_lstm_layers, sequence_len=sequence_len, n_deep_layers=n_dnn_layers).to(device)
   if isTrain:
-    res = model.load_data(combined_df, isShuffle=False, split=1.0, sequence_len=sequence_len, nout=nout)
+    res = model.load_data(combined_df, isShuffle=False, split=1.0, reference_date=reference_date, sequence_len=sequence_len, nout=nout)
     if len(res) == 1:
       train_dataloader = res[0]
     else:
-      scaler, train_dataloader = res
-    last_epoch = train(model=model, n_epochs = num_epoch, device=device, scaler=scaler, trainloader=train_dataloader, save_model_path='./savedModel/万华化学.pt') # testloader=test_df,
-    last_epoch = last_epoch.flatten()
+      scalers, train_dataloader = res
+    train(model=model, n_epochs = num_epoch, device=device, scalers=scalers, trainloader=train_dataloader, save_model_path='./savedModel/万华化学.pt') # testloader=test_df,
+    # last_epoch = last_epoch.flatten()
 
-    dates = np.array(pd.date_range(start="2014-06-03", periods=len(last_epoch), freq='B'))
+    # dates = np.array(pd.date_range(start="2014-06-03", periods=len(last_epoch), freq='B'))
 
-    new_df = pd.DataFrame(index=dates)
-    # new_df = pd.DataFrame(last_epoch)
-    # print(new_df)
-    new_df["close"] = last_epoch
+    # new_df = pd.DataFrame(index=dates)
+    # # new_df = pd.DataFrame(last_epoch)
+    # new_df["close"] = last_epoch
 
-    new_df.to_csv(f"./predictions/{train_file[5:]}_pred.csv")
-    print(f'{train_file[5:]}_pred.csv')
+    # new_df.to_csv(f"./predictions/{train_file[5:]}_pred.csv")
+    # print(f'{train_file[5:]}_pred.csv')
+
+    # code for plotting graph
+
     # figure, axes = plt.subplots(figsize=(15, 6))
     # axes.xaxis_date()
 
@@ -204,18 +196,9 @@ def process_single_file(num_epoch: int, num_pred: int, train_file: str, test_fil
     # plt.savefig('./plots/万华化学.png')
   else:
     model.load_state_dict(torch.load('./savedModel/万华化学.pt'))
-    scalar_close, dataloader = model.load_data(df, isShuffle=False, sequence_len=sequence_len, nout=nout, isTrain=True)
-  
-    # train_dataloader = model.load_data(df, isShuffle=True, sequence_len=sequence_len, nout=nout)
-    # train(model=model, n_epochs = 50, device=device, trainloader=train_dataloader, save_model_path='./savedModel/万华化学') # testloader=test_df,
-
-    #-----------------------------------------
+    scalers, dataloader = model.load_data(df, isShuffle=False, sequence_len=sequence_len, nout=nout, isTrain=True)
+    
     _, predictions = n_step_forecast(model, df, target="close", tw=sequence_len, true_data=df, n=num_pred, forecast_from=100)
-    #  predictions, _ = n_step_forecast(model, df, target="close", tw=sequence_len, true_data=test_df, n=num_pred)
-
-    #  unormalized = scalar_close.inverse_transform(predictions.loc[predictions.index[-num_pred:], "forecast"].values.reshape(-1, 1))
-    #  predictions.loc[predictions.index[-num_pred:], "forecast"] = np.array(unormalized).flatten()
-    predictions = scalar_close.inverse_transform(predictions.reshape(-1, 1))
 
     actuals = np.array(test_df["close"].values[:num_pred])
 
@@ -248,7 +231,7 @@ def main():
   
   for i in range(len(train_files)):
     train_file, test_file = train_files[i], test_files[i]
-    process_single_file(num_epoch=200, num_pred=60, train_file=train_file, test_file=test_file, isTrain=True)
+    process_single_stock(num_epoch=150, num_pred=60, train_file=train_file, test_file=test_file, isTrain=True)
 
   
 if __name__ == "__main__":
