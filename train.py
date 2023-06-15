@@ -80,7 +80,7 @@ def make_predictions_from_dataloader(model, unshuffled_dataloader):
   return predictions.squeeze(), actuals
 
 
-def one_step_forecast(model: LSTM, history: pd.DataFrame):
+def one_step_forecast(model: LSTM, history: np.ndarray):
       '''
       model: PyTorch model object
       history: a sequence of values representing the latest values of the time 
@@ -98,31 +98,32 @@ def one_step_forecast(model: LSTM, history: pd.DataFrame):
       return pred.detach().numpy().reshape(-1)
 
 
-def n_step_forecast(model: LSTM, data: pd.DataFrame, true_data: pd.DataFrame, target: str, tw: int, n: int, forecast_from: int=None, plot=False):
+def n_step_forecast(model: LSTM, data: pd.DataFrame, true_data: pd.DataFrame, tw: int, n: int, forecast_from: int=None, plot=False):
       '''
       n: integer defining how many steps to forecast
       forecast_from: integer defining which index to forecast from. None if
       you want to forecast from the end.
       plot: True if you want to output a plot of the forecast, False if not.
       '''
-      history = data[target].copy().to_frame()
+      history = data.copy()
       # Create initial sequence input based on where in the series to forecast 
       # from.
       if forecast_from:
-        pre = list(history[forecast_from - tw : forecast_from][target].values)
+        pre = history[forecast_from - tw : forecast_from].values
       else:
-        pre = list(history[target].values)[-tw:]
+        pre = history[-tw:].values
 
-      # TODO: getting this part working
       forecasts = []
       # Call one_step_forecast n times and append prediction to history
       for i, step in enumerate(range(n)):
+        # calculate index for extracting rows to add real observed indicators into pre data frame
+        index = tw * i
+
         pre_ = np.array(pre[-tw:]).reshape(-1, 1)
-        print(pre_.shape)
         forecast = one_step_forecast(model, pre_).squeeze()
 
         forecasts.append(forecast)
-        pre.append(true_data.loc[i + forecast_from, "close"])
+        pre.append(true_data.loc[index ])
       
       # The rest of this is just to add the forecast to the correct time of 
       # the history series
@@ -146,10 +147,12 @@ def process_single_stock(num_epoch: int, num_pred: int, train_file: str, test_fi
   test_df = pd.read_csv(f'./data/{test_file}.csv', sep=',')
   test_df = pd.concat([df, test_df], axis=0)
   combined_df = test_df.fillna(method='ffill')
+  combined_df = combined_df.drop(labels=["code", "turn", "adjustflag", "isST", "tradestatus"], axis=1)
+  combined_df = combined_df.fillna(method="ffill")
   reference_date = pd.to_datetime("2014-06-03")
 
   n_features = 9
-  nhid = 64          # Number of nodes in the hidden layer
+  nhid = 64           # Number of nodes in the hidden layer
   n_lstm_layers = 3
   n_dnn_layers = 3    # Number of hidden fully connected layers
   nout = 1            # Prediction Window
@@ -159,23 +162,17 @@ def process_single_stock(num_epoch: int, num_pred: int, train_file: str, test_fi
   device = 'cuda' if USE_CUDA else 'cpu'
 
   model = LSTM(n_features, nhid, nout, n_lstm_layers=n_lstm_layers, sequence_len=sequence_len, n_deep_layers=n_dnn_layers).to(device)
+  norm_train_df, scalars_train = model.normalize(df, reference_date)
+  norm_test_df, scalars_test = model.normalize(df, reference_date)
+
   if isTrain:
     res = model.load_data(combined_df, isShuffle=False, split=1.0, reference_date=reference_date, sequence_len=sequence_len, nout=nout)
     if len(res) == 1:
       train_dataloader = res[0]
     else:
       scalers, train_dataloader = res
-    train(model=model, n_epochs = num_epoch, device=device, scalers=scalers, trainloader=train_dataloader, save_model_path='./savedModel/万华化学.pt') # testloader=test_df,
-    # last_epoch = last_epoch.flatten()
+    train(model=model, n_epochs = num_epoch, device=device, scalers=scalers, trainloader=train_dataloader, save_model_path=f'./savedModel/{train_file[5:]}.pt')
 
-    # dates = np.array(pd.date_range(start="2014-06-03", periods=len(last_epoch), freq='B'))
-
-    # new_df = pd.DataFrame(index=dates)
-    # # new_df = pd.DataFrame(last_epoch)
-    # new_df["close"] = last_epoch
-
-    # new_df.to_csv(f"./predictions/{train_file[5:]}_pred.csv")
-    # print(f'{train_file[5:]}_pred.csv')
 
     # code for plotting graph
 
@@ -195,10 +192,10 @@ def process_single_stock(num_epoch: int, num_pred: int, train_file: str, test_fi
     # plt.legend()
     # plt.savefig('./plots/万华化学.png')
   else:
-    model.load_state_dict(torch.load('./savedModel/万华化学.pt'))
-    scalers, dataloader = model.load_data(df, isShuffle=False, sequence_len=sequence_len, nout=nout, isTrain=True)
+    model.load_state_dict(torch.load(f'./savedModel/{train_file[5:]}.pt'))
+    # scalers, dataloader = model.load_data(df, isShuffle=False, reference_date=reference_date, sequence_len=sequence_len, nout=nout, isTrain=True)
     
-    _, predictions = n_step_forecast(model, df, target="close", tw=sequence_len, true_data=df, n=num_pred, forecast_from=100)
+    _, predictions = n_step_forecast(model, df, tw=sequence_len, true_data=test_df, n=num_pred, forecast_from=100)
 
     actuals = np.array(test_df["close"].values[:num_pred])
 
@@ -231,7 +228,7 @@ def main():
   
   for i in range(len(train_files)):
     train_file, test_file = train_files[i], test_files[i]
-    process_single_stock(num_epoch=150, num_pred=60, train_file=train_file, test_file=test_file, isTrain=True)
+    process_single_stock(num_epoch=100, num_pred=60, train_file=train_file, test_file=test_file, isTrain=True)
 
   
 if __name__ == "__main__":
