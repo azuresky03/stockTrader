@@ -8,6 +8,7 @@ import pandas as pd
 import torch
 import matplotlib.pyplot as plt
 from stable_baselines3 import A2C
+from stable_baselines3 import DDPG
 import stable_baselines3.common.env_checker as check
 import gym
 sys.path.append('..')
@@ -18,8 +19,8 @@ RF = 0.03/DAY
 
 def train():
     train_df = pd.read_csv("../direct/train.csv")
-    for g in [0.8,0.7,0.75]:
-        for n_step in[30,35]:
+    for g in [0.8,0.9]:
+        for n_step in[30]:
             train_env = gym.make('stock_env/StockTradingEnv-v2', df=train_df)
             check.check_env(train_env)
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -31,7 +32,10 @@ def train():
             check.check_env(test_env)
 
             test_int = 0
+            count = 0
+            print(n_step, g)
             for i in range(3):
+                count +=1
                 obs = test_env.reset()
 
                 rates = []
@@ -55,14 +59,15 @@ def train():
                 # print(info['net_worth'], info['shares'],info['trans_reward'])
                 interest = info['net_worth'] / 500000 - 1
                 test_int += interest
-                print(n_step,g)
                 daily_return = np.array(daily_return)
                 sharpe = (daily_return.mean() - RF) / daily_return.std() * math.sqrt(DAY)
                 print(interest,sharpe)
-                if sharpe < 0.5:
+                if sharpe < 0.3:
                     break
-
-            print(test_int/3)
+            t = int(test_int / count * 1000) / 1000
+            print(t)
+            if t > 0.3 and count == 3:
+                model.save('/saved_models/model3-A2C' + str(t))
             print()
             del model
 
@@ -73,7 +78,7 @@ def evaluate(model_path,turns=3):
     colors = ['b', 'g', 'r', 'c', 'm', 'y']
     total_int = 0
     total_sharpe = 0
-    model = A2C.load(model_path)
+    model = A2C.load('saved_models/'+model_path)
     cri_hold = []
     cri = []
     for s in range(26):
@@ -120,4 +125,4 @@ def evaluate(model_path,turns=3):
     print(total_int,total_sharpe)
 
 if __name__ == '__main__':
-    train()
+    evaluate("env2-DDPG1.091")

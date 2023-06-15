@@ -17,3 +17,9 @@ register(
     entry_point='stock_env.env2:StockTradingEnv',
     max_episode_steps=15000,
 )
+
+register(
+    id='stock_env/StockTradingEnv-v3',
+    entry_point='stock_env.env3:StockTradingEnv',
+    max_episode_steps=15000,
+)

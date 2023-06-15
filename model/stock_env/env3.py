@@ -1,14 +1,18 @@
+import math
+
 import gym
 from gym import spaces
 import numpy as np
 import pandas as pd
 
+DAY = 252
+RF = 0.03/DAY
 STOCK_NUM = 26
 INI_ACCOUNT_BALANCE = 500000
-FEATURES_LIST = ['close','volume','high','open','low','macd','adx','rsi']
+FEATURES_LIST = ['close','volume','open','high','low','macd','adx','rsi']
 FEATURES_NUM = len(FEATURES_LIST)
 MIN_TRANS_NUM = 100
-SELL_FEES = 0.0015
+SELL_FEES = 0.001
 BUY_FEES = 0.001
 STOP_ACCOUNT_BALANCE = 0.3*INI_ACCOUNT_BALANCE
 
@@ -30,7 +34,9 @@ class StockTradingEnv(gym.Env):
         self.trading = [True]*STOCK_NUM
         self.holding_price = [0]*STOCK_NUM
         self.trans_reward = 0
+        self.sharpe = 0
         self.net_worth = INI_ACCOUNT_BALANCE
+        self.daily_returns = []
 
         #Action space
         self.action_space = spaces.Box(low=-1,high=1,shape=(STOCK_NUM,))
@@ -66,7 +72,7 @@ class StockTradingEnv(gym.Env):
         get information of current status
         :return: dict
         """
-        d = { "day":self.day/STOCK_NUM, "balance":self.account_balance, "shares":self.share_hold, "net_worth":self.net_worth,"cur_price":self.cur_price}
+        d = { "day":self.day/STOCK_NUM, "balance":self.account_balance, "shares":self.share_hold, "net_worth":self.net_worth,"cur_price":self.cur_price, "daily_returns":self.daily_returns}
         return d
 
     def _take_action(self,action):
@@ -94,16 +100,26 @@ class StockTradingEnv(gym.Env):
         for i in range(STOCK_NUM):
             if self.share_hold[i] > 0:
                 new_net_worth += self.share_hold[i] * self.cur_price[i] * MIN_TRANS_NUM
+        self.daily_returns.append((new_net_worth-self.net_worth)/self.net_worth)
         self.net_worth = new_net_worth
 
     def step(self,action):
         pre_net_worth = self.net_worth
+        pre_sharpe = self.sharpe
         done = False
 
         self._take_action(action)
         d = self._get_info()
 
-        reward = (self.net_worth - pre_net_worth)*0.7 + 0.5*self.trans_reward
+        if self.day > 20:
+            daily_return = np.array(self.daily_returns)
+            sharpe = (daily_return.mean() - RF) / daily_return.std() * math.sqrt(DAY)
+        else:
+            sharpe = 0
+        self.sharpe = sharpe
+
+        d['sta'] = 80000*(sharpe-pre_sharpe)
+        reward = (self.net_worth - pre_net_worth)*0.7 + 0.3*self.trans_reward + 80000*(sharpe-pre_sharpe)
         d['trans_reward'] = self.trans_reward
         self.trans_reward = 0
 
@@ -140,6 +156,8 @@ class StockTradingEnv(gym.Env):
         self.net_worth = INI_ACCOUNT_BALANCE
         self.holding_price = [0]*STOCK_NUM
         self.trans_reward = 0
+        self.daily_returns = []
+        self.sharpe = 0
         self.state = self._get_obs()
         return self.state
 
